@@ -1,0 +1,114 @@
+services:
+  shard1_primary:
+    image: postgres:16-alpine
+    container_name: shard1_primary
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5433:5432"
+    volumes:
+      - shard1_primary_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard1_replica:
+    image: postgres:16-alpine
+    container_name: shard1_replica
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5443:5432"
+    volumes:
+      - shard1_replica_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard2_primary:
+    image: postgres:16-alpine
+    container_name: shard2_primary
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5434:5432"
+    volumes:
+      - shard2_primary_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard2_replica:
+    image: postgres:16-alpine
+    container_name: shard2_replica
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5444:5432"
+    volumes:
+      - shard2_replica_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard3_primary:
+    image: postgres:16-alpine
+    container_name: shard3_primary
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5435:5432"
+    volumes:
+      - shard3_primary_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard3_replica:
+    image: postgres:16-alpine
+    container_name: shard3_replica
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5445:5432"
+    volumes:
+      - shard3_replica_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard4_primary:
+    image: postgres:16-alpine
+    container_name: shard4_primary
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5436:5432"
+    volumes:
+      - shard4_primary_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  shard4_replica:
+    image: postgres:16-alpine
+    container_name: shard4_replica
+    environment:
+      POSTGRES_DB: userlogs
+      POSTGRES_USER: benchmark
+      POSTGRES_PASSWORD: benchmark
+    ports:
+      - "5446:5432"
+    volumes:
+      - shard4_replica_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  shard1_primary_data:
+  shard1_replica_data:
+  shard2_primary_data:
+  shard2_replica_data:
+  shard3_primary_data:
+  shard3_replica_data:
+  shard4_primary_data:
+  shard4_replica_data:

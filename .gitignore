@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+data/*.csv
+data/load_chunks/
+results/*.csv
+results/*.json
+AI-AGENT.md
