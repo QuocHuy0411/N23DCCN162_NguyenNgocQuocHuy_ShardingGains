@@ -1,4 +1,4 @@
-# Sharding Gains
+﻿# Sharding Gains
 
 **Horizontal Scaling Efficiency with PostgreSQL, Docker Compose, and a Python Coordinator**
 
@@ -518,6 +518,25 @@ For `4 shards`, rows are split across shard 1, shard 2, shard 3, and shard 4.
 
 For each benchmark scenario, the coordinator sends the aggregation query to active logical shards in parallel. This is essential because the goal is to measure horizontal scaling behavior, not sequential query execution.
 
+### Connection Pooling
+
+Before a scenario starts measuring time, the coordinator prepares PostgreSQL connection pools for the active primary and replica endpoints. During the timed benchmark section, each worker thread borrows an already-open connection, executes the aggregation query, then returns the connection to the pool.
+
+This keeps connection setup cost out of the measured time as much as possible:
+
+```text
+prepare connection pools
+start timer
+borrow pooled connections in parallel
+execute SQL
+fetch results
+merge results
+stop timer
+close pools
+```
+
+The benchmark still measures query execution, result transfer, and coordinator-side merge time. It does not include the repeated overhead of opening and closing a new PostgreSQL connection for every shard query.
+
 ### Query-time Fallback
 
 There is no separate health check phase. The coordinator handles failures only when it actually queries a shard:
@@ -750,3 +769,5 @@ python -m coordinator.main benchmark --nodes 4
 ```
 
 This sequence shows the complete story: sharding improves query throughput, replica fallback preserves completeness when one primary is unavailable, and the coordinator remains stable even when a logical shard is completely down.
+
+

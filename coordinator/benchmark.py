@@ -13,7 +13,7 @@ from coordinator.config import (
     TABLE_BY_NODES,
     LogicalShard,
 )
-from coordinator.db import query_grouped_counts
+from coordinator.db import EndpointConnectionPool, query_grouped_counts_with_pool
 from coordinator.merger import merge_count_rows
 from coordinator.router import active_shards, validate_nodes
 
@@ -49,9 +49,37 @@ class ScenarioResult:
     notes: list[str]
 
 
-def query_logical_shard(logical_shard: LogicalShard, table_name: str) -> ShardQueryResult:
+@dataclass
+class LogicalShardPools:
+    shard_id: int
+    primary: EndpointConnectionPool
+    replica: EndpointConnectionPool
+
+
+def build_pools_for_scenario(nodes: int) -> dict[int, LogicalShardPools]:
+    pools: dict[int, LogicalShardPools] = {}
+    for shard in active_shards(nodes):
+        pools[shard.shard_id] = LogicalShardPools(
+            shard_id=shard.shard_id,
+            primary=EndpointConnectionPool(shard.primary),
+            replica=EndpointConnectionPool(shard.replica),
+        )
+    return pools
+
+
+def close_scenario_pools(pools: dict[int, LogicalShardPools]) -> None:
+    for shard_pools in pools.values():
+        shard_pools.primary.closeall()
+        shard_pools.replica.closeall()
+
+
+def query_logical_shard(
+    logical_shard: LogicalShard,
+    table_name: str,
+    shard_pools: LogicalShardPools,
+) -> ShardQueryResult:
     try:
-        rows = query_grouped_counts(logical_shard.primary, table_name)
+        rows = query_grouped_counts_with_pool(shard_pools.primary, table_name)
         return ShardQueryResult(
             shard_id=logical_shard.shard_id,
             source="P",
@@ -60,7 +88,7 @@ def query_logical_shard(logical_shard: LogicalShard, table_name: str) -> ShardQu
         )
     except Exception as primary_error:
         try:
-            rows = query_grouped_counts(logical_shard.replica, table_name)
+            rows = query_grouped_counts_with_pool(shard_pools.replica, table_name)
             return ShardQueryResult(
                 shard_id=logical_shard.shard_id,
                 source="R",
@@ -78,7 +106,10 @@ def query_logical_shard(logical_shard: LogicalShard, table_name: str) -> ShardQu
             )
 
 
-def run_single_benchmark(nodes: int) -> RunResult:
+def run_single_benchmark(
+    nodes: int,
+    pools: dict[int, LogicalShardPools],
+) -> RunResult:
     validate_nodes(nodes)
     table_name = TABLE_BY_NODES[nodes]
     shards = active_shards(nodes)
@@ -88,7 +119,12 @@ def run_single_benchmark(nodes: int) -> RunResult:
 
     with ThreadPoolExecutor(max_workers=nodes) as executor:
         futures = {
-            executor.submit(query_logical_shard, shard, table_name): shard
+            executor.submit(
+                query_logical_shard,
+                shard,
+                table_name,
+                pools[shard.shard_id],
+            ): shard
             for shard in shards
         }
         for future in as_completed(futures):
@@ -125,9 +161,14 @@ def _notes_for_sources(shard_sources: dict[int, str], completeness_percent: floa
 
 def run_scenario(nodes: int, runs: int, baseline_time: float | None) -> ScenarioResult:
     run_results = []
-    for index in range(1, runs + 1):
-        print(f"Running benchmark: nodes={nodes}, run={index}/{runs}")
-        run_results.append(run_single_benchmark(nodes))
+    print(f"Preparing connection pools for nodes={nodes}...")
+    pools = build_pools_for_scenario(nodes)
+    try:
+        for index in range(1, runs + 1):
+            print(f"Running benchmark: nodes={nodes}, run={index}/{runs}")
+            run_results.append(run_single_benchmark(nodes, pools))
+    finally:
+        close_scenario_pools(pools)
 
     run_times = [result.elapsed_seconds for result in run_results]
     median_time = statistics.median(run_times)
@@ -193,11 +234,19 @@ def load_saved_baseline_time() -> float | None:
         return None
 
     baseline = payload.get("baseline_median_time_seconds")
-    if isinstance(baseline, (int, float)) and baseline > 0:
+    if (
+        payload.get("dataset_rows") == EXPECTED_LOGS
+        and isinstance(baseline, (int, float))
+        and baseline > 0
+    ):
         return float(baseline)
 
     for row in payload.get("results", []):
-        if row.get("nodes") == 1 and row.get("completeness_percent") == 100:
+        if (
+            row.get("nodes") == 1
+            and row.get("expected_logs") == EXPECTED_LOGS
+            and row.get("completeness_percent") == 100
+        ):
             median = row.get("median_time_seconds")
             if isinstance(median, (int, float)) and median > 0:
                 return float(median)

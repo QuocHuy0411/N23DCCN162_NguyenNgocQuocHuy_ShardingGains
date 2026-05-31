@@ -8,7 +8,13 @@ from typing import Any
 from tabulate import tabulate
 
 from coordinator.benchmark import ScenarioResult, load_saved_baseline_time
-from coordinator.config import DEFAULT_ROWS, RESULTS_CSV, RESULTS_DIR, RESULTS_JSON
+from coordinator.config import (
+    DEFAULT_ROWS,
+    EXPECTED_LOGS,
+    RESULTS_CSV,
+    RESULTS_DIR,
+    RESULTS_JSON,
+)
 
 
 def _format_seconds(value: float) -> str:
@@ -161,6 +167,7 @@ def save_results(results: list[ScenarioResult]) -> None:
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "dataset_rows": EXPECTED_LOGS,
         "baseline_median_time_seconds": baseline,
         "results": rows,
     }
