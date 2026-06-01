@@ -47,15 +47,15 @@ def init_database() -> None:
     from coordinator.db import run_init_sql
 
     for endpoint in iter_all_endpoints():
-        print(f"Initializing schema on {endpoint.name}...")
+        print(f"Đang khởi tạo schema trên {endpoint.name}...")
         run_init_sql(endpoint)
-    print("All shard schemas are initialized.")
+    print("Đã khởi tạo xong schema trên toàn bộ shard.")
 
 
 def load_all_scenarios(source_csv: Path = DATA_FILE, keep_chunks: bool = False) -> None:
     if not source_csv.exists():
         raise FileNotFoundError(
-            f"Dataset file not found: {source_csv}. Run generate first."
+            f"Không tìm thấy tệp dataset: {source_csv}. Hãy chạy generate trước."
         )
 
     if CHUNK_DIR.exists():
@@ -64,25 +64,25 @@ def load_all_scenarios(source_csv: Path = DATA_FILE, keep_chunks: bool = False) 
     try:
         for nodes in SCENARIOS:
             table_name = TABLE_BY_NODES[nodes]
-            print(f"Preparing chunks for {nodes} shard scenario...")
+            print(f"Đang chuẩn bị chunk cho kịch bản {nodes} shard...")
             chunk_paths = _create_chunk_files(nodes, source_csv)
 
-            print(f"Truncating {table_name} on active primary/replica nodes...")
+            print(f"Đang truncate {table_name} trên các node primary/replica đang dùng...")
             for shard in active_shards(nodes):
                 truncate_table(shard.primary, table_name)
                 truncate_table(shard.replica, table_name)
 
-            print(f"Loading {table_name} into primary and replica nodes...")
+            print(f"Đang nạp {table_name} vào các node primary và replica...")
             for shard in active_shards(nodes):
                 chunk_path = chunk_paths[shard.shard_id]
                 copy_csv_to_table(shard.primary, table_name, chunk_path)
                 copy_csv_to_table(shard.replica, table_name, chunk_path)
                 print(
-                    f"Loaded shard{shard.shard_id} {table_name} "
-                    f"into primary and replica."
+                    f"Đã nạp shard{shard.shard_id} {table_name} "
+                    f"vào primary và replica."
                 )
     finally:
         if CHUNK_DIR.exists() and not keep_chunks:
             shutil.rmtree(CHUNK_DIR)
 
-    print("Data load completed for scenarios: 1, 2, 4.")
+    print("Đã nạp dữ liệu xong cho các kịch bản: 1, 2, 4.")

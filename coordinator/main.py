@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from coordinator.benchmark import run_benchmark
 from coordinator.config import DEFAULT_ROWS, DEFAULT_RUNS, SCENARIOS
 from coordinator.dataset_generator import generate_dataset
 from coordinator.loader import init_database, load_all_scenarios
 from coordinator.reporter import print_benchmark_table, save_results
+
+
+#Điểm này là điểm khởi đầu của chương trình. 
+# Nó sử dụng argparse để phân tích các đối số dòng lệnh và gọi các hàm tương ứng dựa trên lệnh được cung cấp. 
+# Các lệnh bao gồm "generate" để tạo dữ liệu, "init-db" để khởi tạo cơ sở dữ liệu, "load" để tải dữ liệu vào các kịch bản khác nhau, và "benchmark" để chạy các bài kiểm tra hiệu suất. 
+# Kết quả của bài kiểm tra sẽ được in ra bảng và lưu lại.
+def configure_console_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    configure_console_encoding()
     parser = build_parser()
     args = parser.parse_args()
 

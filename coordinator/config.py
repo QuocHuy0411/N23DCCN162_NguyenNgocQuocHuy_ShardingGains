@@ -23,7 +23,7 @@ RANDOM_SEED = 20260531
 ACTIONS = ("login", "logout", "view_product", "search", "add_to_cart", "checkout")
 
 SCENARIOS = (1, 2, 4)
-DEFAULT_RUNS = 3
+DEFAULT_RUNS = 20
 EXPECTED_LOGS = DEFAULT_ROWS
 CONNECT_TIMEOUT_SECONDS = 2
 STATEMENT_TIMEOUT_MS = 30_000

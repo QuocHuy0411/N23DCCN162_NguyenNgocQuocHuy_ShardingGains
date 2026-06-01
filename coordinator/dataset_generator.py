@@ -21,8 +21,8 @@ def generate_dataset(
     force: bool = False,
 ) -> Path:
     if output_file.exists() and not force:
-        print(f"Dataset already exists: {output_file}")
-        print("Use --force to regenerate it.")
+        print(f"Dataset đã tồn tại: {output_file}")
+        print("Dùng --force để sinh lại.")
         return output_file
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,7 +50,7 @@ def generate_dataset(
             )
 
             if row_id % 100_000 == 0:
-                print(f"Generated {row_id:,}/{rows:,} rows")
+                print(f"Đã sinh {row_id:,}/{rows:,} dòng")
 
-    print(f"Dataset written to: {output_file}")
+    print(f"Đã ghi dataset vào: {output_file}")
     return output_file

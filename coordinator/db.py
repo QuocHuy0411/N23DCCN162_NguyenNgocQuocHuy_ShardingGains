@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -15,6 +17,40 @@ from coordinator.config import (
     POOL_MIN_CONNECTIONS,
     STATEMENT_TIMEOUT_MS,
 )
+
+
+@dataclass
+class QueryCostMetrics:
+    shared_hit_blocks: int
+    shared_read_blocks: int
+    temp_read_blocks: int
+    temp_written_blocks: int
+    actual_total_time_ms: float
+    actual_rows: int
+
+    @property
+    def io_blocks(self) -> int:
+        return (
+            self.shared_hit_blocks
+            + self.shared_read_blocks
+            + self.temp_read_blocks
+            + self.temp_written_blocks
+        )
+
+
+def _grouped_counts_statement(table_name: str) -> sql.Composed:
+    return sql.SQL(
+        """
+        WITH per_user_action AS (
+            SELECT user_id, action, COUNT(*) AS action_count
+            FROM {}
+            GROUP BY user_id, action
+        )
+        SELECT user_id, SUM(action_count) AS log_count
+        FROM per_user_action
+        GROUP BY user_id
+        """
+    ).format(sql.Identifier(table_name))
 
 
 def connect(endpoint: DbEndpoint):
@@ -61,7 +97,7 @@ class EndpointConnectionPool:
 
     def getconn(self):
         if self._pool is None:
-            raise RuntimeError(f"Pool unavailable for {self.endpoint.name}: {self.error}")
+            raise RuntimeError(f"Pool không khả dụng cho {self.endpoint.name}: {self.error}")
         return self._pool.getconn()
 
     def putconn(self, conn, close: bool = False) -> None:
@@ -107,18 +143,7 @@ def copy_csv_to_table(endpoint: DbEndpoint, table_name: str, csv_file: Path) -> 
 
 
 def query_grouped_counts(endpoint: DbEndpoint, table_name: str) -> list[tuple]:
-    statement = sql.SQL(
-        """
-        WITH per_user_action AS (
-            SELECT user_id, action, COUNT(*) AS action_count
-            FROM {}
-            GROUP BY user_id, action
-        )
-        SELECT user_id, SUM(action_count) AS log_count
-        FROM per_user_action
-        GROUP BY user_id
-        """
-    ).format(sql.Identifier(table_name))
+    statement = _grouped_counts_statement(table_name)
 
     with connect(endpoint) as conn:
         with conn.cursor() as cursor:
@@ -130,18 +155,7 @@ def query_grouped_counts_with_pool(
     endpoint_pool: EndpointConnectionPool,
     table_name: str,
 ) -> list[tuple]:
-    statement = sql.SQL(
-        """
-        WITH per_user_action AS (
-            SELECT user_id, action, COUNT(*) AS action_count
-            FROM {}
-            GROUP BY user_id, action
-        )
-        SELECT user_id, SUM(action_count) AS log_count
-        FROM per_user_action
-        GROUP BY user_id
-        """
-    ).format(sql.Identifier(table_name))
+    statement = _grouped_counts_statement(table_name)
 
     conn = None
     close_connection = False
@@ -152,6 +166,48 @@ def query_grouped_counts_with_pool(
             rows = cursor.fetchall()
         conn.commit()
         return rows
+    except Exception:
+        close_connection = True
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if conn is not None:
+            endpoint_pool.putconn(conn, close=close_connection)
+
+
+def explain_grouped_counts_cost_with_pool(
+    endpoint_pool: EndpointConnectionPool,
+    table_name: str,
+) -> QueryCostMetrics:
+    statement = sql.SQL("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {}").format(
+        _grouped_counts_statement(table_name)
+    )
+
+    conn = None
+    close_connection = False
+    try:
+        conn = endpoint_pool.getconn()
+        with conn.cursor() as cursor:
+            cursor.execute(statement)
+            raw_plan = cursor.fetchone()[0]
+        conn.commit()
+
+        if isinstance(raw_plan, str):
+            raw_plan = json.loads(raw_plan)
+
+        root = raw_plan[0]["Plan"]
+        return QueryCostMetrics(
+            shared_hit_blocks=int(root.get("Shared Hit Blocks", 0)),
+            shared_read_blocks=int(root.get("Shared Read Blocks", 0)),
+            temp_read_blocks=int(root.get("Temp Read Blocks", 0)),
+            temp_written_blocks=int(root.get("Temp Written Blocks", 0)),
+            actual_total_time_ms=float(root.get("Actual Total Time", 0)),
+            actual_rows=int(root.get("Actual Rows", 0)),
+        )
     except Exception:
         close_connection = True
         if conn is not None:

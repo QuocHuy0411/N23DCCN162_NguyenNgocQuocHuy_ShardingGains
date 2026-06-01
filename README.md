@@ -1,4 +1,4 @@
-﻿# Sharding Gains
+# Sharding Gains
 
 **Horizontal Scaling Efficiency with PostgreSQL, Docker Compose, and a Python Coordinator**
 
@@ -28,12 +28,13 @@ The same dataset is evaluated across three layouts:
 The final report shows:
 
 - Run time for each benchmark attempt
-- Median time
+- Mean, median, and P99 query time
 - Speedup
 - Efficiency
 - Counted logs
 - Completeness
 - Which node served each shard: primary, replica, unavailable, or unused
+- A Streamlit dashboard with benchmark tables and charts
 
 ## Table Of Contents
 
@@ -43,6 +44,7 @@ The final report shows:
 - [Quick Start](#quick-start)
 - [Command Reference](#command-reference)
 - [Benchmark Output](#benchmark-output)
+- [UI Dashboard](#ui-dashboard)
 - [Failure Demonstrations](#failure-demonstrations)
 - [Result Files](#result-files)
 - [How The Benchmark Works](#how-the-benchmark-works)
@@ -61,7 +63,8 @@ Python Coordinator
   |-- Benchmark Runner
   |-- Query-time Fallback Handler
   |-- Result Merger
-  `-- Terminal Reporter
+  |-- Terminal Reporter
+  `-- Streamlit Dashboard
 
 PostgreSQL Containers
   |-- shard1_primary
@@ -98,6 +101,7 @@ Replication is implemented at application level during data loading. When the lo
 ```text
 .
 |-- docker-compose.yml
+|-- dashboard.py
 |-- README.md
 |-- requirements.txt
 |
@@ -157,6 +161,7 @@ python -m coordinator.main generate --rows 1000000
 python -m coordinator.main init-db
 python -m coordinator.main load
 python -m coordinator.main benchmark
+streamlit run dashboard.py
 ```
 
 Expected normal result:
@@ -178,10 +183,34 @@ Run only the 4-shard scenario:
 python -m coordinator.main benchmark --nodes 4
 ```
 
-Run each scenario 5 times instead of 3:
+Run each scenario 5 times for a custom benchmark:
 
 ```bash
 python -m coordinator.main benchmark --runs 5
+```
+
+The default benchmark run count is now:
+
+```text
+runs = 20
+```
+
+For a quick demo, run fewer attempts:
+
+```bash
+python -m coordinator.main benchmark --runs 3
+```
+
+Open the dashboard after a benchmark run:
+
+```bash
+streamlit run dashboard.py
+```
+
+You can also launch it through the existing CLI:
+
+```bash
+python -m coordinator.main ui
 ```
 
 ## Command Reference
@@ -277,9 +306,24 @@ Set custom run count:
 python -m coordinator.main benchmark --runs 5
 ```
 
+If `--runs` is not provided, the coordinator runs each scenario 20 times:
+
+```text
+1 shard  -> 20 query runs
+2 shards -> 20 query runs
+4 shards -> 20 query runs
+```
+
+Other valid examples:
+
+```bash
+python -m coordinator.main benchmark --runs 20
+python -m coordinator.main benchmark --runs 30
+```
+
 ## Benchmark Output
 
-The benchmark prints one unified table for normal runs and failure runs.
+The benchmark still prints one unified terminal table for normal runs and failure runs. The dashboard is the main visual report, but the CLI output remains available.
 
 Example:
 
@@ -288,16 +332,16 @@ Example:
 
 Query: WITH per_user_action AS (...) SELECT user_id, SUM(action_count) FROM per_user_action GROUP BY user_id
 Dataset: 1,000,000 User_Logs
-Runs per scenario: 3
+Runs per scenario: 20
 Representative time: Median
 
-+---------+-----------------------+----------+-----------+--------------+-----------+----------------+------+------+------+------+
-|   Nodes | Run times (seconds)   |   Median | Speedup   | Efficiency   |   Counted | Completeness   | S1   | S2   | S3   | S4   |
-+=========+=======================+==========+===========+==============+===========+================+======+======+======+======+
-|       1 | [6.12, 6.03, 6.18]    |     6.12 | 1.00      | 1.00         |   1000000 | 100%           | P    | -    | -    | -    |
-|       2 | [3.41, 3.36, 3.48]    |     3.41 | 1.79      | 0.89         |   1000000 | 100%           | P    | P    | -    | -    |
-|       4 | [1.95, 1.88, 1.92]    |     1.92 | 3.19      | 0.80         |   1000000 | 100%           | P    | P    | P    | P    |
-+---------+-----------------------+----------+-----------+--------------+-----------+----------------+------+------+------+------+
++---------+-----------------------+--------+----------+-------+-----------+--------------+-----------+----------------+------+------+------+------+
+|   Nodes | Run times (seconds)   |   Mean |   Median |   P99 | Speedup   | Efficiency   |   Counted | Completeness   | S1   | S2   | S3   | S4   |
++=========+=======================+========+==========+=======+===========+==============+===========+================+======+======+======+======+
+|       1 | [6.12, ... 6.09]      |   6.10 |     6.08 |  6.31 | 1.00      | 1.00         |   1000000 | 100%           | P    | -    | -    | -    |
+|       2 | [3.41, ... 3.39]      |   3.39 |     3.37 |  3.52 | 1.80      | 0.90         |   1000000 | 100%           | P    | P    | -    | -    |
+|       4 | [1.95, ... 1.90]      |   1.91 |     1.90 |  2.04 | 3.20      | 0.80         |   1000000 | 100%           | P    | P    | P    | P    |
++---------+-----------------------+--------+----------+-------+-----------+--------------+-----------+----------------+------+------+------+------+
 ```
 
 Column meanings:
@@ -306,9 +350,11 @@ Column meanings:
 |---|---|
 | `Nodes` | Number of logical shards in the scenario |
 | `Run times` | Wall-clock times for each run |
-| `Median` | Representative time for the scenario |
-| `Speedup` | `T1 / Tn` |
-| `Efficiency` | `Speedup / number_of_shards` |
+| `Mean` | Average of run times |
+| `Median` | Middle value of sorted run times; representative time for the scenario |
+| `P99` | Nearest-rank P99, used as tail latency |
+| `Speedup` | `median_time_1_shard / median_time_n_shards` |
+| `Efficiency` | `speedup / number_of_shards` |
 | `Counted` | Total logs counted after merging shard results |
 | `Completeness` | `Counted / 1,000,000 * 100%` |
 | `S1` to `S4` | Source used for each logical shard |
@@ -321,6 +367,87 @@ Shard source symbols:
 | `R` | Primary was unavailable, data was read from replica |
 | blank | Both primary and replica were unavailable |
 | `-` | Shard is not used in this scenario |
+
+Nếu marker nguồn đọc thay đổi giữa các lần chạy, báo cáo hiển thị marker gộp như `P/R` và thêm ghi chú nguồn đọc dữ liệu đã thay đổi.
+
+## Dashboard giao diện
+
+Chạy dashboard sau khi đã sinh kết quả benchmark:
+
+```bash
+streamlit run dashboard.py
+```
+
+Lệnh CLI tương đương:
+
+```bash
+python -m coordinator.main ui
+```
+
+Dashboard đọc `results/benchmark_results.json`. Nếu tệp chưa tồn tại, dashboard hiển thị lệnh benchmark cần chạy thay vì crash.
+
+Bố cục dashboard:
+
+1. Tiêu đề trang và mô tả ngắn của dự án
+2. Các thẻ tóm tắt: tổng số log, số user riêng biệt, số lần benchmark, trung vị tốt nhất, mức tăng tốc tốt nhất, độ đầy đủ hiện tại
+3. Bảng `Thời gian chạy truy vấn`
+4. Bảng `Tóm tắt benchmark`
+5. Bốn biểu đồ benchmark
+
+### Bảng thời gian chạy truy vấn
+
+Bảng `Thời gian chạy truy vấn` có một dòng cho mỗi kịch bản và một cột động cho mỗi lần chạy:
+
+```text
+Số shard | Lần 1 | Lần 2 | ... | Lần 20
+```
+
+Đơn vị: giây.
+
+Mỗi ô là thời gian thực tế của một lần chạy benchmark truy vấn. Thời gian này gồm gửi truy vấn song song tới các shard, nhận kết quả và gộp kết quả tại coordinator. Thời gian này không gồm sinh dữ liệu, nạp dữ liệu hoặc khởi động Docker.
+
+### Bảng tóm tắt benchmark
+
+Bảng `Tóm tắt benchmark` gồm:
+
+```text
+Số shard
+Trung bình (s)
+Trung vị (s)
+P99 (s)
+Mức tăng tốc
+Hiệu suất
+Số log đếm được
+Độ đầy đủ
+S1
+S2
+S3
+S4
+```
+
+Công thức:
+
+```text
+Trung bình = giá trị trung bình của run_times_seconds
+Trung vị = giá trị giữa của run_times_seconds sau khi sắp xếp
+P99 = nearest-rank percentile, ceil(0.99 * number_of_runs) - 1
+Mức tăng tốc = median_time_1_shard / median_time_n_shards
+Hiệu suất = speedup / number_of_shards
+Độ đầy đủ = counted_logs / expected_logs * 100
+```
+
+Mức tăng tốc và hiệu suất dùng thời gian trung vị, không dùng thời gian trung bình. Nếu chưa có baseline 1 shard đầy đủ, cả hai giá trị là `N/A`. Nếu độ đầy đủ dưới `100%`, dashboard cảnh báo rằng kết quả là một phần và không nên so sánh như benchmark đầy đủ.
+
+### Biểu đồ dashboard
+
+Dashboard gồm các biểu đồ sau:
+
+| Biểu đồ | Mục đích |
+|---|---|
+| `Thời gian truy vấn trung vị theo số shard` | So sánh thời gian truy vấn trung vị cho 1, 2 và 4 shard |
+| `Mức tăng tốc thực tế so với mức tăng tốc lý tưởng` | So sánh mức tăng tốc đo được với mức tăng tốc tuyến tính lý tưởng |
+| `Hiệu suất song song theo số shard` | Cho biết các shard bổ sung được sử dụng hiệu quả đến mức nào |
+| `Heatmap thời gian truy vấn theo từng lần chạy` | Cho biết dao động giữa các lần chạy, outlier và tail latency |
 
 ## Failure Demonstrations
 
@@ -475,7 +602,9 @@ The result files include:
 ```text
 nodes
 run_times_seconds
+mean_time_seconds
 median_time_seconds
+p99_time_seconds
 speedup
 efficiency
 counted_logs
@@ -489,6 +618,25 @@ notes
 ```
 
 Normal and failure benchmark results are stored in the same files. There is no separate failure dashboard or failure result table.
+
+The JSON file contains dashboard-friendly sections:
+
+```json
+{
+  "dataset": {
+    "expected_logs": 1000000,
+    "distinct_users": 100000
+  },
+  "benchmark_config": {
+    "runs": 20,
+    "scenarios": [1, 2, 4],
+    "time_unit": "seconds"
+  },
+  "benchmark_results": []
+}
+```
+
+The file also keeps `baseline_median_time_seconds` and a flat `results` list for compatibility with the saved-baseline speedup logic.
 
 ## How The Benchmark Works
 
@@ -577,7 +725,30 @@ If all logical shards are available, `Counted = 1,000,000`.
 
 If one logical shard is completely unavailable, `Counted` is lower and `Completeness` drops below `100%`.
 
-### Speedup And Efficiency
+### Mean, Median, P99, Speedup, And Efficiency
+
+Mean:
+
+```text
+Mean = sum(run_times_seconds) / number_of_runs
+```
+
+Median:
+
+```text
+Sort run_times_seconds.
+If the number of runs is odd, use the middle value.
+If the number of runs is even, use the average of the two middle values.
+```
+
+P99:
+
+```text
+index = ceil(0.99 * number_of_runs) - 1
+p99 = sorted_run_times[index]
+```
+
+With `runs = 20`, nearest-rank P99 is usually close to the slowest run. It is still useful for observing tail latency and slow outliers.
 
 Speedup:
 

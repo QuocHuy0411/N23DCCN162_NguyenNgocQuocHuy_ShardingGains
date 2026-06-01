@@ -1,234 +1,116 @@
-# Yêu cầu triển khai dự án: Horizontal Scaling Efficiency - Sharding Gains
+# Ngữ cảnh AI Agent - Sharding Gains
 
-## 1. Bối cảnh dự án
+Tài liệu này mô tả trạng thái hiện tại của dự án để AI agent hoặc maintainer tiếp theo có thể đọc nhanh, hiểu đúng kiến trúc, và sửa code mà không làm lệch mục tiêu ban đầu.
 
-Tôi đang làm một dự án môn Cơ sở dữ liệu phân tán với chủ đề:
+## 1. Tổng quan dự án
 
-**Horizontal Scaling Efficiency: “Sharding Gains”**
+**Sharding Gains** là project benchmark cơ sở dữ liệu phân tán dùng PostgreSQL, Docker Compose và Python coordinator để chứng minh hiệu quả mở rộng ngang bằng phân mảnh ngang dữ liệu.
 
-Mục tiêu của dự án là xây dựng một hệ thống cơ sở dữ liệu phân tán mô phỏng bằng Docker và PostgreSQL để đo hiệu quả mở rộng ngang bằng phương pháp phân mảnh ngang dữ liệu.
-
-Dataset là bảng `User_Logs` gồm **1.000.000 bản ghi log người dùng**.
-
-Truy vấn benchmark chính là:
+Dữ liệu benchmark là bảng `User_Logs` sinh tổng hợp, mặc định **1.000.000 dòng**. Workload chính là truy vấn tổng hợp số log theo `user_id`. Trong code hiện tại, truy vấn được viết theo dạng CTE hai bước:
 
 ```sql
-SELECT user_id, COUNT(*)
-FROM user_logs
+WITH per_user_action AS (
+    SELECT user_id, action, COUNT(*) AS action_count
+    FROM user_logs_n{n}
+    GROUP BY user_id, action
+)
+SELECT user_id, SUM(action_count) AS log_count
+FROM per_user_action
 GROUP BY user_id;
 ```
 
-Dự án cần so sánh hiệu năng khi dữ liệu được chia trên:
+Truy vấn này vẫn trả kết quả cuối cùng tương đương yêu cầu `COUNT(*) GROUP BY user_id`, đồng thời giữ rõ bước tổng hợp theo `(user_id, action)`.
 
-* 1 shard
-* 2 shard
-* 4 shard
+Project benchmark 3 layout:
 
-Sau đó tính:
+| Scenario | Bảng dùng | Logical shards | Mục đích |
+|---:|---|---:|---|
+| 1 shard | `user_logs_n1` | 1 | Baseline |
+| 2 shards | `user_logs_n2` | 2 | So sánh split trung bình |
+| 4 shards | `user_logs_n4` | 4 | Split lớn nhất trong project |
 
-* thời gian chạy từng lần
-* thời gian trung vị
-* speedup
-* efficiency
+Kết quả benchmark gồm:
 
-Ngoài phần benchmark bình thường, dự án cần có replication để tôi có thể **tự tắt shard bằng Docker** rồi chạy lại benchmark, quan sát hệ thống phản ứng.
+- thời gian từng run;
+- median time;
+- speedup;
+- efficiency;
+- tổng log đếm được;
+- completeness;
+- nguồn đọc của từng shard: `P`, `R`, trống, hoặc `-`;
+- file kết quả CSV/JSON trong `results/`.
 
----
+## 2. Công nghệ và ràng buộc thiết kế
 
-## 2. Công nghệ bắt buộc sử dụng
+Đang dùng:
 
-Sử dụng các công nghệ sau:
+- Docker Compose;
+- PostgreSQL 16 Alpine;
+- Python coordinator;
+- `psycopg2-binary`;
+- `tabulate`;
+- terminal output, không có web UI.
 
-* Docker
-* Docker Compose
-* PostgreSQL
-* Python làm coordinator
-* Terminal output, không cần giao diện web
+Không triển khai:
 
-Không sử dụng:
+- 2PC;
+- 3PC;
+- API server;
+- web dashboard;
+- dashboard lỗi riêng;
+- bảng lỗi riêng;
+- health check riêng trước benchmark;
+- script tự động `docker stop` / `docker start` node;
+- PostgreSQL streaming replication.
 
-* 2PC
-* 3PC
-* Web UI
-* API server
-* Dashboard lỗi riêng
-* Cơ chế tự động tạo lỗi
-* Cơ chế tự động tắt node
-* Bảng lỗi riêng
-* Health check riêng trước khi chạy benchmark
+Replication hiện tại là **application-level replication**: khi load dữ liệu, coordinator copy cùng partition vào primary và replica tương ứng. Vì dataset tĩnh và workload chỉ đọc, cách này đủ cho mục tiêu demo fallback.
 
----
-
-## 3. Tư tưởng thiết kế chính
-
-Tôi muốn hệ thống theo hướng:
-
-> Tôi là người chủ động tắt shard bằng Docker, sau đó bấm chạy benchmark lại. Chương trình không tự tạo lỗi, không tự tắt container, không có bảng lỗi riêng. Bảng benchmark dùng chung cho cả trường hợp bình thường và trường hợp có shard bị tắt.
-
-Khi chạy benchmark:
-
-* Shard nào chạy được thì in kết quả bình thường.
-* Nếu primary của shard bị tắt thì thử đọc từ replica.
-* Nếu replica đọc được thì ô shard đó hiển thị `R`.
-* Nếu primary đọc được thì ô shard đó hiển thị `P`.
-* Nếu cả primary và replica của shard đều tắt thì ô shard đó để trống.
-* Các shard còn chạy được vẫn tiếp tục được query.
-* Không được để chương trình crash chỉ vì một shard bị tắt.
-* Không được dừng toàn bộ benchmark nếu một shard không phản hồi.
-* Bên dưới bảng kết quả cần ghi chú rõ nếu kết quả bị thiếu dữ liệu.
-
----
-
-## 4. Kiến trúc tổng thể cần triển khai
-
-Thiết kế hệ thống gồm:
+## 3. Cấu trúc thư mục hiện tại
 
 ```text
-Python Coordinator
- ├── Dataset Generator
- ├── Data Loader
- ├── Shard Router
- ├── Benchmark Runner
- ├── Query-time Fallback Handler
- ├── Result Merger
- └── Terminal Reporter
-
-PostgreSQL Docker Containers
- ├── shard1_primary
- ├── shard1_replica
- ├── shard2_primary
- ├── shard2_replica
- ├── shard3_primary
- ├── shard3_replica
- ├── shard4_primary
- └── shard4_replica
+.
+|-- AI-AGENT.md
+|-- README.md
+|-- docker-compose.yml
+|-- requirements.txt
+|
+|-- coordinator/
+|   |-- __init__.py
+|   |-- main.py
+|   |-- config.py
+|   |-- dataset_generator.py
+|   |-- loader.py
+|   |-- router.py
+|   |-- benchmark.py
+|   |-- db.py
+|   |-- merger.py
+|   `-- reporter.py
+|
+|-- db/
+|   `-- init.sql
+|
+|-- data/
+|   |-- .gitkeep
+|   `-- user_logs.csv
+|
+`-- results/
+    |-- .gitkeep
+    |-- benchmark_results.csv
+    `-- benchmark_results.json
 ```
 
-Mỗi logical shard có 2 PostgreSQL container:
+## 4. Docker và PostgreSQL nodes
 
-```text
-shard1 = shard1_primary + shard1_replica
-shard2 = shard2_primary + shard2_replica
-shard3 = shard3_primary + shard3_replica
-shard4 = shard4_primary + shard4_replica
-```
+`docker-compose.yml` định nghĩa 8 PostgreSQL containers:
 
-Replica trong dự án này dùng theo kiểu đơn giản ở mức ứng dụng:
+| Logical shard | Primary container | Replica container | Primary port | Replica port |
+|---:|---|---|---:|---:|
+| 1 | `shard1_primary` | `shard1_replica` | `5433` | `5443` |
+| 2 | `shard2_primary` | `shard2_replica` | `5434` | `5444` |
+| 3 | `shard3_primary` | `shard3_replica` | `5435` | `5445` |
+| 4 | `shard4_primary` | `shard4_replica` | `5436` | `5446` |
 
-* Khi load dữ liệu vào primary shard, cũng load cùng dữ liệu đó vào replica tương ứng.
-* Không cần PostgreSQL streaming replication thật.
-* Dataset là dữ liệu tĩnh để benchmark nên application-level replication là đủ.
-* Workload chính là truy vấn đọc, không có giao dịch ghi phân tán.
-
----
-
-## 5. Ràng buộc rất quan trọng
-
-### 5.1. Không dùng 2PC/3PC
-
-Không triển khai 2PC hoặc 3PC.
-
-Lý do: dự án chỉ benchmark truy vấn đọc/tổng hợp `COUNT GROUP BY user_id`, không có transaction ghi đồng thời trên nhiều shard.
-
-### 5.2. Không thiết kế health check riêng
-
-Không tạo module kiểu:
-
-```text
-HealthChecker kiểm tra trước shard nào UP/DOWN
-```
-
-Không in bảng health check riêng.
-
-Tuy nhiên vẫn cần dùng:
-
-* `try/except`
-* `connect_timeout`
-* `statement_timeout`
-
-để tránh chương trình bị treo khi query vào một container đã bị tắt.
-
-Đây không được xem là health check riêng, mà chỉ là xử lý lỗi tại thời điểm query.
-
-### 5.3. Không tự động tạo lỗi
-
-Không viết code tự động:
-
-```bash
-docker stop ...
-docker start ...
-```
-
-Không tạo script tự động kill node.
-
-Việc tắt/bật node sẽ do tôi tự làm thủ công bằng Docker.
-
-### 5.4. Không có bảng lỗi riêng
-
-Không tạo bảng kiểu:
-
-```text
-FAILURE TEST RESULT
-```
-
-Tất cả trường hợp bình thường và lỗi đều dùng cùng một bảng benchmark.
-
----
-
-## 6. Cấu trúc thư mục mong muốn
-
-Tạo project với cấu trúc gợi ý như sau:
-
-```text
-sharding-gains/
-│
-├── docker-compose.yml
-├── README.md
-├── requirements.txt
-│
-├── coordinator/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── config.py
-│   ├── dataset_generator.py
-│   ├── loader.py
-│   ├── router.py
-│   ├── benchmark.py
-│   ├── db.py
-│   ├── merger.py
-│   └── reporter.py
-│
-├── db/
-│   └── init.sql
-│
-├── data/
-│   └── user_logs.csv
-│
-└── results/
-    ├── benchmark_results.csv
-    └── benchmark_results.json
-```
-
-Có thể điều chỉnh tên file nếu cần, nhưng phải giữ logic rõ ràng.
-
----
-
-## 7. Docker Compose
-
-Tạo `docker-compose.yml` với 8 PostgreSQL containers:
-
-```text
-shard1_primary
-shard1_replica
-shard2_primary
-shard2_replica
-shard3_primary
-shard3_replica
-shard4_primary
-shard4_replica
-```
-
-Thông tin database dùng chung:
+Database credential dùng chung:
 
 ```text
 POSTGRES_DB=userlogs
@@ -236,35 +118,11 @@ POSTGRES_USER=benchmark
 POSTGRES_PASSWORD=benchmark
 ```
 
-Port gợi ý:
+Mỗi container có volume riêng. `db/init.sql` được mount vào `/docker-entrypoint-initdb.d/init.sql`.
 
-```text
-shard1_primary  -> localhost:5433
-shard1_replica  -> localhost:5443
+## 5. Schema
 
-shard2_primary  -> localhost:5434
-shard2_replica  -> localhost:5444
-
-shard3_primary  -> localhost:5435
-shard3_replica  -> localhost:5445
-
-shard4_primary  -> localhost:5436
-shard4_replica  -> localhost:5446
-```
-
-Mỗi container có volume riêng để dữ liệu không bị lẫn nhau.
-
-Không cần cấu hình PostgreSQL streaming replication.
-
-Không cần Docker healthcheck.
-
----
-
-## 8. Schema database
-
-Tạo bảng User Logs cho từng scenario benchmark.
-
-Để có thể benchmark cả 1 shard, 2 shard, 4 shard mà không phải reload lại dữ liệu liên tục, nên tạo 3 bảng:
+`db/init.sql` tạo 3 bảng có schema giống nhau:
 
 ```text
 user_logs_n1
@@ -272,602 +130,260 @@ user_logs_n2
 user_logs_n4
 ```
 
-Schema các bảng giống nhau:
+Mỗi bảng có:
 
 ```sql
-CREATE TABLE IF NOT EXISTS user_logs_n1 (
-    id BIGINT PRIMARY KEY,
-    user_id INT NOT NULL,
-    action VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_user_logs_n1_user_id
-ON user_logs_n1(user_id);
+id BIGINT PRIMARY KEY,
+user_id INT NOT NULL,
+action VARCHAR(50) NOT NULL,
+created_at TIMESTAMP NOT NULL
 ```
 
-Tương tự cho:
+Mỗi bảng có index theo `user_id`.
 
-```text
-user_logs_n2
-user_logs_n4
-```
-
-Mỗi bảng tương ứng một cách chia dữ liệu:
-
-* `user_logs_n1`: dùng cho benchmark 1 shard
-* `user_logs_n2`: dùng cho benchmark 2 shard
-* `user_logs_n4`: dùng cho benchmark 4 shard
-
----
-
-## 9. Dataset Generator
-
-Tạo dataset gồm đúng:
-
-```text
-1.000.000 dòng User_Logs
-```
-
-Schema dữ liệu:
-
-```text
-id
-user_id
-action
-created_at
-```
-
-Yêu cầu:
-
-* `id` chạy từ 1 đến 1.000.000.
-* `user_id` có số lượng là 100.000.
-* `action` chọn ngẫu nhiên từ một số giá trị như:
-
-  * login
-  * logout
-  * view_product
-  * search
-  * add_to_cart
-  * checkout
-* `created_at` là timestamp hợp lệ.
-* Dùng random seed cố định để kết quả có thể tái lập.
-* Lưu dataset vào:
-
-```text
-data/user_logs.csv
-```
-
-Nếu file đã tồn tại thì không cần sinh lại, trừ khi có tham số `--force`.
-
----
-
-## 10. Quy tắc phân mảnh ngang
-
-Dùng hash-based horizontal fragmentation theo `user_id`.
-
-Công thức:
-
-```text
-shard_index = user_id % number_of_shards
-```
-
-Mapping:
-
-```text
-0 -> shard1
-1 -> shard2
-2 -> shard3
-3 -> shard4
-```
-
-Với 1 shard:
-
-```text
-Tất cả dữ liệu vào shard1
-```
-
-Với 2 shard:
-
-```text
-user_id % 2 = 0 -> shard1
-user_id % 2 = 1 -> shard2
-```
-
-Với 4 shard:
-
-```text
-user_id % 4 = 0 -> shard1
-user_id % 4 = 1 -> shard2
-user_id % 4 = 2 -> shard3
-user_id % 4 = 3 -> shard4
-```
-
----
-
-## 11. Data Loader
-
-Khi load dữ liệu:
-
-### Với scenario 1 shard
-
-Load toàn bộ 1.000.000 dòng vào:
-
-```text
-shard1_primary.user_logs_n1
-shard1_replica.user_logs_n1
-```
-
-Các shard khác không cần dữ liệu cho bảng `user_logs_n1`.
-
-### Với scenario 2 shard
-
-Chia dữ liệu theo `user_id % 2`, load vào:
-
-```text
-shard1_primary.user_logs_n2
-shard1_replica.user_logs_n2
-
-shard2_primary.user_logs_n2
-shard2_replica.user_logs_n2
-```
-
-### Với scenario 4 shard
-
-Chia dữ liệu theo `user_id % 4`, load vào:
-
-```text
-shard1_primary.user_logs_n4
-shard1_replica.user_logs_n4
-
-shard2_primary.user_logs_n4
-shard2_replica.user_logs_n4
-
-shard3_primary.user_logs_n4
-shard3_replica.user_logs_n4
-
-shard4_primary.user_logs_n4
-shard4_replica.user_logs_n4
-```
-
-Trước khi load lại, cần truncate các bảng liên quan để tránh trùng dữ liệu.
-
-Dữ liệu trên replica phải giống primary tương ứng.
-
----
-
-## 12. Benchmark Query
-
-Với mỗi scenario `n` trong `{1, 2, 4}`, query bảng tương ứng:
-
-```text
-n = 1 -> user_logs_n1
-n = 2 -> user_logs_n2
-n = 4 -> user_logs_n4
-```
-
-Query cần chạy trên từng shard:
-
-```sql
-SELECT user_id, COUNT(*) AS log_count
-FROM user_logs_n{n}
-GROUP BY user_id;
-```
-
-Ví dụ với 4 shard:
-
-* Gửi query đến shard1
-* Gửi query đến shard2
-* Gửi query đến shard3
-* Gửi query đến shard4
-
-Các query phải chạy song song, không chạy tuần tự.
-
-Dùng Python:
-
-```text
-ThreadPoolExecutor
-```
-
-hoặc cơ chế tương đương.
-
-Lý do: nếu query tuần tự thì khó thể hiện lợi ích của sharding.
-
----
-
-## 13. Query-time fallback logic
-
-Không health check trước.
-
-Khi benchmark cần query một logical shard, làm như sau:
-
-```text
-1. Thử query primary.
-2. Nếu primary query thành công:
-   - source = "P"
-   - dùng kết quả từ primary.
-3. Nếu primary lỗi hoặc timeout:
-   - thử query replica.
-4. Nếu replica query thành công:
-   - source = "R"
-   - dùng kết quả từ replica.
-5. Nếu cả primary và replica đều lỗi:
-   - source = ""
-   - result = []
-   - counted = 0
-   - không crash chương trình.
-```
-
-Pseudo-code:
-
-```python
-def query_logical_shard(logical_shard, table_name):
-    try:
-        result = query_database(logical_shard.primary, table_name)
-        return {
-            "source": "P",
-            "rows": result,
-            "counted": sum(row["log_count"] for row in result)
-        }
-    except Exception:
-        pass
-
-    try:
-        result = query_database(logical_shard.replica, table_name)
-        return {
-            "source": "R",
-            "rows": result,
-            "counted": sum(row["log_count"] for row in result)
-        }
-    except Exception:
-        return {
-            "source": "",
-            "rows": [],
-            "counted": 0
-        }
-```
-
-Phải có timeout ngắn, ví dụ:
-
-```text
-connect_timeout = 2 giây
-statement_timeout = 30 giây
-```
-
-để tránh chương trình bị treo lâu khi container đã bị tắt.
-
----
-
-## 14. Cách đo thời gian
-
-Mỗi scenario chạy 3 lần.
-
-Ví dụ:
-
-```text
-1 shard -> chạy 3 lần
-2 shard -> chạy 3 lần
-4 shard -> chạy 3 lần
-```
-
-Mỗi lần đo wall-clock time bằng Python:
-
-```python
-time.perf_counter()
-```
-
-Thời gian đo phải bao gồm:
-
-* gửi query song song đến các shard
-* nhận kết quả
-* merge kết quả ở coordinator
-
-Không tính thời gian:
-
-* sinh dataset
-* load dữ liệu
-* khởi động Docker
-
-Với mỗi scenario, lưu:
-
-```text
-run1_time
-run2_time
-run3_time
-median_time
-```
-
-Median là trung vị của 3 lần chạy.
-
----
-
-## 15. Merge kết quả
-
-Do dữ liệu được shard theo `user_id`, mỗi `user_id` chỉ thuộc về một logical shard trong cùng scenario.
-
-Vì vậy merge kết quả có thể thực hiện bằng cách nối kết quả từ các shard.
-
-Tuy nhiên để an toàn, vẫn có thể merge bằng dictionary:
-
-```text
-global_counts[user_id] += log_count
-```
-
-Sau khi merge, tính:
-
-```text
-counted_logs = tổng tất cả log_count
-```
-
-Với kết quả đầy đủ:
-
-```text
-counted_logs = 1.000.000
-```
-
-Nếu một logical shard bị mất cả primary và replica thì:
-
-```text
-counted_logs < 1.000.000
-```
-
----
-
-## 16. Công thức tính benchmark
-
-### Speedup
-
-```text
-Speedup(n) = T1 / Tn
-```
-
-Trong đó:
-
-```text
-T1 = median time của scenario 1 shard
-Tn = median time của scenario n shard
-```
-
-### Efficiency
-
-```text
-Efficiency(n) = Speedup(n) / n
-```
-
-Với 1 shard:
-
-```text
-Speedup = 1.00
-Efficiency = 1.00
-```
-
-Nếu baseline 1 shard không có kết quả đầy đủ thì speedup và efficiency nên hiển thị `N/A`.
-
-Nếu một scenario có completeness < 100%, vẫn có thể in speedup/efficiency nhưng phải ghi chú bên dưới rằng kết quả không nên so sánh trực tiếp vì dữ liệu bị thiếu.
-
----
-
-## 17. Terminal output bắt buộc
-
-Kết quả phải in ra terminal bằng một bảng duy nhất dùng cho cả benchmark bình thường và benchmark khi có shard bị tắt.
-
-Bảng nên có dạng:
-
-```text
-================ SHARDING BENCHMARK ================
-
-Query: SELECT user_id, COUNT(*) FROM user_logs GROUP BY user_id
-Dataset: 1,000,000 User_Logs
-Runs per scenario: 3
-Representative time: Median
-
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| Nodes | Run times (seconds)    | Median | Speedup | Efficiency | Counted | Completeness | S1 | S2 | S3 | S4 |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| 1     | [6.12, 6.03, 6.18]     | 6.12   | 1.00    | 1.00       | 1000000 | 100%         | P  | -  | -  | -  |
-| 2     | [3.41, 3.36, 3.48]     | 3.41   | 1.79    | 0.89       | 1000000 | 100%         | P  | P  | -  | -  |
-| 4     | [1.95, 1.88, 1.92]     | 1.92   | 3.19    | 0.80       | 1000000 | 100%         | P  | P  | P  | P  |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-```
-
-Ý nghĩa cột shard:
-
-```text
-P  = đọc từ primary
-R  = đọc từ replica
-   = để trống, nghĩa là cả primary và replica đều không đọc được
--  = shard không dùng trong scenario đó
-```
-
-Bên dưới bảng luôn in chú thích:
-
-```text
-Legend:
-P = primary used
-R = replica used
-blank = primary and replica unavailable
-- = shard not used in this scenario
-```
-
-Nếu có replica được dùng, in thêm note:
-
-```text
-Note:
-Some primary shards were unavailable, so replica nodes were used.
-```
-
-Nếu có shard bị trống, in thêm note:
-
-```text
-Warning:
-Some logical shards were unavailable because both primary and replica failed.
-The result is partial and should not be compared as a complete benchmark.
-```
-
----
-
-## 18. Ví dụ khi tôi tự tắt primary shard
-
-Tôi sẽ tự chạy:
+Lưu ý: nếu volume PostgreSQL đã tồn tại trước khi sửa `init.sql`, Docker entrypoint không tự chạy lại init script. Khi cần reset schema từ đầu, dùng:
 
 ```bash
-docker stop shard2_primary
-```
-
-Sau đó chạy lại:
-
-```bash
-python -m coordinator.main benchmark --nodes 4
-```
-
-Kết quả mong muốn:
-
-```text
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| Nodes | Run times (seconds)    | Median | Speedup | Efficiency | Counted | Completeness | S1 | S2 | S3 | S4 |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| 4     | [2.04, 2.01, 2.06]     | 2.04   | 2.94    | 0.74       | 1000000 | 100%         | P  | R  | P  | P  |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-```
-
-Ý nghĩa:
-
-```text
-S2 hiển thị R vì shard2_primary bị tắt nhưng shard2_replica vẫn còn.
-Completeness vẫn là 100% vì replica có đủ dữ liệu.
-```
-
----
-
-## 19. Ví dụ khi tôi tự tắt cả primary và replica
-
-Tôi sẽ tự chạy:
-
-```bash
-docker stop shard2_primary
-docker stop shard2_replica
-```
-
-Sau đó chạy:
-
-```bash
-python -m coordinator.main benchmark --nodes 4
-```
-
-Kết quả mong muốn:
-
-```text
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| Nodes | Run times (seconds)    | Median | Speedup | Efficiency | Counted | Completeness | S1 | S2 | S3 | S4 |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-| 4     | [1.51, 1.49, 1.53]     | 1.51   | 3.97    | 0.99       | 750000  | 75%          | P  |    | P  | P  |
-+-------+------------------------+--------+---------+------------+---------+--------------+----+----+----+----+
-```
-
-Ý nghĩa:
-
-```text
-S2 để trống vì cả primary và replica của shard2 đều không đọc được.
-Counted chỉ còn khoảng 750000.
-Completeness chỉ còn khoảng 75%.
-Phải ghi chú đây là partial result, không phải hệ thống nhanh hơn thật.
-```
-
----
-
-## 20. CLI commands cần hỗ trợ
-
-Hỗ trợ các lệnh sau:
-
-### Khởi động Docker
-
-```bash
+docker compose down -v
 docker compose up -d --build
 ```
 
-### Sinh dataset
-
-```bash
-python -m coordinator.main generate --rows 1000000
-```
-
-Nếu file đã tồn tại:
-
-```bash
-python -m coordinator.main generate --rows 1000000 --force
-```
-
-### Khởi tạo bảng
+Hoặc chạy:
 
 ```bash
 python -m coordinator.main init-db
 ```
 
-### Load dữ liệu
+để apply schema lên toàn bộ primary và replica.
+
+## 6. Các module Python
+
+### `coordinator/config.py`
+
+Chứa cấu hình trung tâm:
+
+- path `data/`, `results/`, `db/init.sql`;
+- DB credential;
+- `DEFAULT_ROWS = 1_000_000`;
+- `USER_ID_COUNT = 100_000`;
+- `RANDOM_SEED = 20260531`;
+- `SCENARIOS = (1, 2, 4)`;
+- `DEFAULT_RUNS = 3`;
+- timeout DB;
+- mapping `TABLE_BY_NODES`;
+- dataclass `DbEndpoint`;
+- dataclass `LogicalShard`;
+- mapping `SHARDS`.
+
+Nếu đổi port hoặc tên container trong Docker Compose, phải cập nhật `SHARDS` tương ứng.
+
+### `coordinator/main.py`
+
+Định nghĩa CLI:
 
 ```bash
+python -m coordinator.main generate --rows 1000000
+python -m coordinator.main generate --rows 1000000 --force
+python -m coordinator.main init-db
 python -m coordinator.main load
+python -m coordinator.main load --keep-chunks
+python -m coordinator.main benchmark
+python -m coordinator.main benchmark --nodes 4
+python -m coordinator.main benchmark --runs 5
 ```
 
-Lệnh này load dữ liệu cho cả 3 scenario:
+`--nodes` chỉ nhận `1`, `2`, hoặc `4`. `--runs` phải lớn hơn `0`.
+
+### `coordinator/dataset_generator.py`
+
+Sinh `data/user_logs.csv` với các cột:
 
 ```text
-n = 1
-n = 2
-n = 4
+id,user_id,action,created_at
 ```
 
-vào cả primary và replica.
+Đặc điểm:
 
-### Chạy benchmark tất cả scenario
+- `id` chạy từ 1 đến số dòng yêu cầu;
+- `user_id` random từ 1 đến 100.000;
+- `action` lấy từ `ACTIONS`;
+- `created_at` nằm trong năm bắt đầu từ `2025-01-01`;
+- random seed cố định để tái lập;
+- nếu file đã tồn tại thì không ghi đè, trừ khi dùng `--force`.
+
+### `coordinator/router.py`
+
+Quy tắc phân mảnh:
+
+```python
+if nodes == 1:
+    shard_id = 1
+else:
+    shard_id = (user_id % nodes) + 1
+```
+
+Mapping thực tế:
+
+- `nodes=1`: toàn bộ dữ liệu vào shard 1;
+- `nodes=2`: dùng shard 1 và shard 2;
+- `nodes=4`: dùng shard 1, 2, 3, 4.
+
+### `coordinator/loader.py`
+
+Luồng load:
+
+1. kiểm tra `data/user_logs.csv`;
+2. tạo các chunk CSV tạm trong `data/load_chunks`;
+3. với từng scenario `1`, `2`, `4`:
+   - chia dữ liệu theo `router.shard_id_for_user`;
+   - truncate bảng tương ứng trên primary và replica của active shards;
+   - dùng PostgreSQL `COPY` để load chunk vào primary;
+   - copy cùng chunk vào replica tương ứng;
+4. xóa `data/load_chunks` sau khi load, trừ khi dùng `--keep-chunks`.
+
+Không load dữ liệu vào shard không tham gia scenario. Ví dụ `user_logs_n2` chỉ được load vào shard 1 và shard 2.
+
+### `coordinator/db.py`
+
+Chứa helper DB:
+
+- `connect`;
+- `EndpointConnectionPool`;
+- `run_sql`;
+- `run_init_sql`;
+- `truncate_table`;
+- `copy_csv_to_table`;
+- `query_grouped_counts`;
+- `query_grouped_counts_with_pool`;
+- `iter_all_endpoints`.
+
+Timeout hiện tại:
+
+```text
+connect_timeout = 2 seconds
+statement_timeout = 30000 ms
+```
+
+Benchmark đang dùng `EndpointConnectionPool` để chuẩn bị connection trước khi đo thời gian. Pool max hiện tại là `1` connection mỗi endpoint vì mỗi logical shard chỉ có một worker query endpoint đó trong mỗi run.
+
+### `coordinator/benchmark.py`
+
+Đây là phần lõi benchmark.
+
+Các dataclass chính:
+
+- `ShardQueryResult`;
+- `RunResult`;
+- `ScenarioResult`;
+- `LogicalShardPools`.
+
+Luồng mỗi scenario:
+
+1. build pool cho primary và replica của các active shards;
+2. chạy `runs` lần;
+3. mỗi run dùng `ThreadPoolExecutor(max_workers=nodes)`;
+4. query các logical shard song song;
+5. trong từng shard:
+   - thử primary trước;
+   - nếu primary lỗi hoặc timeout, thử replica;
+   - nếu replica chạy được, source là `R`;
+   - nếu cả hai lỗi, source là trống và rows rỗng;
+6. merge rows bằng `merger.merge_count_rows`;
+7. tính counted logs và completeness;
+8. lấy median time;
+9. tính speedup và efficiency nếu có baseline.
+
+Baseline:
+
+- Khi chạy toàn bộ scenario, scenario 1 shard đầy đủ sẽ làm baseline.
+- Khi chạy riêng `--nodes 2` hoặc `--nodes 4`, code cố đọc baseline cũ từ `results/benchmark_results.json`.
+- Nếu không có complete baseline, speedup và efficiency là `N/A`.
+
+### `coordinator/merger.py`
+
+Merge kết quả từ các shard bằng dictionary:
+
+```python
+global_counts[user_id] += log_count
+```
+
+Điều này an toàn ngay cả khi một `user_id` xuất hiện ở nhiều nguồn ngoài dự kiến.
+
+### `coordinator/reporter.py`
+
+In bảng terminal và lưu kết quả.
+
+Terminal table có các cột:
+
+```text
+Nodes
+Thời gian chạy (giây)
+Trung vị
+Mức tăng tốc
+Hiệu suất
+Số log đếm được
+Độ đầy đủ
+S1
+S2
+S3
+S4
+```
+
+Chú giải:
+
+```text
+P = dùng primary
+R = dùng replica
+trống = primary và replica đều không khả dụng
+- = shard không dùng trong kịch bản này
+```
+
+Nếu có replica được dùng, reporter in ghi chú. Nếu có shard thiếu hoặc độ đầy đủ < 100%, reporter in cảnh báo kết quả một phần.
+
+Kết quả lưu vào:
+
+```text
+results/benchmark_results.csv
+results/benchmark_results.json
+```
+
+JSON cũng lưu `baseline_median_time_seconds` để lần chạy `--nodes 4` riêng vẫn có thể tính speedup nếu trước đó đã có baseline hợp lệ.
+
+## 7. Luồng chạy chuẩn
+
+Từ trạng thái sạch:
+
+```bash
+docker compose up -d --build
+python -m coordinator.main generate --rows 1000000
+python -m coordinator.main init-db
+python -m coordinator.main load
+python -m coordinator.main benchmark
+```
+
+Sau khi đã setup và load dữ liệu, benchmark lại chỉ cần:
 
 ```bash
 python -m coordinator.main benchmark
 ```
 
-Mặc định chạy:
-
-```text
-nodes = 1, 2, 4
-runs = 3
-```
-
-### Chạy riêng một scenario
+Chạy riêng 4 shard:
 
 ```bash
 python -m coordinator.main benchmark --nodes 4
 ```
 
-### Chạy với số lần đo tùy chỉnh
+Chạy 5 lần mỗi scenario:
 
 ```bash
 python -m coordinator.main benchmark --runs 5
 ```
 
----
+## 8. Demo lỗi thủ công
 
-## 21. Lệnh demo lỗi thủ công cần ghi vào README
+Không viết code tự tắt container. Người dùng tự thao tác Docker rồi chạy benchmark lại.
 
-README phải hướng dẫn tôi tự test lỗi như sau.
-
-### Test bình thường
-
-```bash
-docker compose up -d --build
-python -m coordinator.main generate --rows 1000000
-python -m coordinator.main init-db
-python -m coordinator.main load
-python -m coordinator.main benchmark
-```
-
-Kỳ vọng:
-
-```text
-Completeness = 100%
-S1/S2/S3/S4 đều là P ở scenario 4 shard
-```
-
-### Test tắt 1 primary shard
+### Tắt một primary
 
 ```bash
 docker stop shard2_primary
@@ -878,10 +394,10 @@ Kỳ vọng:
 
 ```text
 S2 = R
-Completeness = 100%
+Độ đầy đủ = 100%
 ```
 
-### Test tắt cả primary và replica của một shard
+### Tắt cả primary và replica của một shard
 
 ```bash
 docker stop shard2_replica
@@ -891,12 +407,13 @@ python -m coordinator.main benchmark --nodes 4
 Kỳ vọng:
 
 ```text
-S2 để trống
-Completeness khoảng 75%
-Có warning partial result
+S2 trống
+Độ đầy đủ < 100%
+Cảnh báo kết quả một phần
+Benchmark không crash
 ```
 
-### Bật lại shard
+### Khôi phục
 
 ```bash
 docker start shard2_primary
@@ -908,169 +425,47 @@ Kỳ vọng:
 
 ```text
 S2 = P
-Completeness = 100%
+Độ đầy đủ = 100%
 ```
 
----
+## 9. Quy tắc khi sửa tiếp dự án
 
-## 22. File kết quả
+Giữ các nguyên tắc sau:
 
-Ngoài in terminal, lưu thêm kết quả vào:
+- Không thêm 2PC/3PC vì workload không có distributed write transaction.
+- Không thêm web UI hoặc API server nếu không có yêu cầu mới rõ ràng.
+- Không thêm health-check table hoặc bảng lỗi riêng.
+- Không tạo script tự động dừng node.
+- Không làm benchmark crash khi một shard chết.
+- Không bỏ fallback primary -> replica.
+- Không chạy query các shard tuần tự trong benchmark; phải giữ query song song.
+- Không tính thời gian generate/load/start Docker vào benchmark.
+- Không xóa logic lưu baseline trong JSON nếu vẫn muốn chạy riêng `--nodes 4` mà có speedup.
+- Nếu đổi số lượng rows mặc định, cập nhật đồng bộ `DEFAULT_ROWS`, `EXPECTED_LOGS`, README và mô tả output.
+- Nếu đổi query benchmark, cập nhật README, reporter header và tài liệu này.
+- Nếu đổi port/container, cập nhật cả `docker-compose.yml` và `coordinator/config.py`.
 
-```text
-results/benchmark_results.csv
-results/benchmark_results.json
-```
+## 10. Các điểm dễ nhầm
 
-Các cột nên có:
+- `shard_id_for_user` trả về shard id bắt đầu từ 1, không phải 0.
+- Với `nodes=1`, toàn bộ rows vào shard 1, không dùng công thức modulo.
+- Replica không phải PostgreSQL streaming replica; nó là một DB container độc lập được load cùng dữ liệu.
+- `init.sql` chỉ tự chạy khi volume PostgreSQL mới được tạo, nhưng lệnh `init-db` có thể chạy lại schema thủ công.
+- `load` truncate và load lại các bảng đang dùng cho từng scenario.
+- `benchmark --nodes 4` có thể hiện `N/A` speedup nếu chưa từng có baseline 1 shard hợp lệ trong JSON.
+- Mức tăng tốc khi độ đầy đủ < 100% không nên xem là so sánh công bằng vì dữ liệu bị thiếu.
 
-```text
-nodes
-run_times_seconds
-median_time_seconds
-speedup
-efficiency
-counted_logs
-expected_logs
-completeness_percent
-s1_source
-s2_source
-s3_source
-s4_source
-notes
-```
+## 11. Tiêu chí trạng thái đúng
 
-Không cần tạo file kết quả lỗi riêng.
+Project được xem là đúng với thiết kế hiện tại khi:
 
-Dữ liệu lỗi và bình thường đều nằm chung trong benchmark results.
-
----
-
-## 23. README bắt buộc phải có
-
-README cần giải thích:
-
-1. Dự án làm gì.
-2. Kiến trúc gồm những container nào.
-3. Cách sharding theo `user_id % number_of_shards`.
-4. Cách replication hoạt động.
-5. Vì sao không dùng 2PC/3PC.
-6. Cách chạy Docker.
-7. Cách generate dataset.
-8. Cách load dữ liệu.
-9. Cách chạy benchmark.
-10. Cách tự test lỗi bằng `docker stop`.
-11. Ý nghĩa các cột trong bảng terminal.
-12. Ý nghĩa `P`, `R`, blank, `-`.
-13. Vì sao khi mất cả primary và replica thì kết quả bị thiếu.
-14. Vì sao không nên so sánh speedup khi completeness < 100%.
-
----
-
-## 24. Tiêu chí hoàn thành
-
-Dự án được xem là hoàn thành nếu đáp ứng đủ các tiêu chí sau:
-
-### Benchmark bình thường
-
-* Chạy được Docker Compose.
-* Có 8 PostgreSQL containers.
-* Sinh được 1.000.000 dòng User_Logs.
-* Load được dữ liệu vào primary và replica.
-* Benchmark được 1 shard, 2 shard, 4 shard.
-* Mỗi scenario chạy 3 lần.
-* Hiển thị đủ 3 thời gian chạy.
-* Tính median.
-* Tính speedup.
-* Tính efficiency.
-* In bảng kết quả trên terminal.
-* Lưu kết quả ra CSV/JSON.
-
-### Replication và lỗi thủ công
-
-* Nếu tắt một primary shard, benchmark không crash.
-* Nếu primary bị tắt nhưng replica còn, chương trình đọc từ replica.
-* Bảng hiển thị `R` ở shard tương ứng.
-* Completeness vẫn 100%.
-* Nếu tắt cả primary và replica của một shard, benchmark không crash.
-* Ô shard đó để trống.
-* Các shard còn lại vẫn query được.
-* Counted logs giảm.
-* Completeness giảm.
-* Có warning bên dưới bảng.
-* Không có bảng lỗi riêng.
-
-### Ràng buộc thiết kế
-
-* Không dùng 2PC.
-* Không dùng 3PC.
-* Không tự động tắt node.
-* Không tạo failure dashboard.
-* Không tạo health check riêng.
-* Không tạo bảng failure test riêng.
-* Không làm web UI.
-
----
-
-## 25. Ghi chú triển khai quan trọng
-
-Khi benchmark scenario 4 shard, nếu shard2 chết hoàn toàn thì các shard còn lại vẫn phải query:
-
-```text
-shard1 -> query được
-shard2 -> không query được, để trống
-shard3 -> query được
-shard4 -> query được
-```
-
-Không được vì shard2 lỗi mà dừng toàn bộ chương trình.
-
-Khi một shard lỗi, kết quả cuối cùng vẫn phải được in.
-
-Nếu không thể kết nối DB, phải bắt exception và chuyển sang replica hoặc trả kết quả rỗng.
-
-Nên dùng package như:
-
-```text
-psycopg2-binary
-tabulate hoặc rich
-pandas tùy chọn
-```
-
-Nếu dùng package nào thì ghi vào `requirements.txt`.
-
----
-
-## 26. Kết quả mong muốn cuối cùng
-
-Sau khi hoàn thành, tôi muốn có một project có thể demo theo luồng:
-
-```text
-1. docker compose up -d --build
-2. generate 1 triệu User_Logs
-3. init-db
-4. load dữ liệu vào primary và replica
-5. chạy benchmark bình thường
-6. thấy bảng so sánh 1, 2, 4 shard
-7. tự docker stop shard2_primary
-8. chạy benchmark lại
-9. thấy S2 chuyển thành R
-10. tự docker stop shard2_replica
-11. chạy benchmark lại
-12. thấy S2 để trống, completeness giảm
-13. docker start lại shard2_primary và shard2_replica
-14. chạy benchmark lại
-15. thấy hệ thống quay về đầy đủ
-```
-
-Mục tiêu cuối cùng là chứng minh:
-
-```text
-- Sharding giúp giảm thời gian xử lý truy vấn aggregation khi tăng số shard.
-- Speedup tăng khi tăng số shard, nhưng efficiency có thể giảm do overhead.
-- Replication giúp hệ thống vẫn trả kết quả đầy đủ khi primary shard bị tắt.
-- Nếu mất cả primary và replica của một shard, hệ thống vẫn không crash nhưng chỉ trả partial result.
-- Bảng benchmark terminal thể hiện được đầy đủ thời gian, speedup, efficiency, counted logs, completeness và shard source.
-```
-
-Hãy triển khai đầy đủ theo mô tả trên. Sau khi code xong, hãy chạy thử các lệnh cơ bản để đảm bảo project hoạt động, sau đó cập nhật README hướng dẫn tôi chạy lại từ đầu.
+- Docker Compose tạo đủ 8 PostgreSQL containers;
+- `generate` tạo hoặc reuse `data/user_logs.csv`;
+- `init-db` tạo bảng trên toàn bộ primary/replica;
+- `load` load đủ dữ liệu vào active primary/replica cho 3 scenario;
+- `benchmark` chạy được 1, 2, 4 shards;
+- mỗi scenario có đủ số run theo `--runs`;
+- bảng terminal có median, speedup, efficiency, counted, completeness và source `S1..S4`;
+- kết quả được lưu ra CSV/JSON;
+- tắt một primary thì fallback sang replica và hiện `R`;
+- tắt cả primary và replica của một shard thì shard đó trống, độ đầy đủ giảm, có cảnh báo, và chương trình vẫn in kết quả cuối.

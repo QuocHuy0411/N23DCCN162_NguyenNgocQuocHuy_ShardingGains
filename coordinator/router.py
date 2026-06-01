@@ -6,7 +6,7 @@ from coordinator.config import SCENARIOS, SHARDS, LogicalShard
 def validate_nodes(nodes: int) -> None:
     if nodes not in SCENARIOS:
         allowed = ", ".join(str(item) for item in SCENARIOS)
-        raise ValueError(f"nodes must be one of: {allowed}")
+        raise ValueError(f"nodes phải là một trong các giá trị: {allowed}")
 
 
 def shard_id_for_user(user_id: int, nodes: int) -> int:
