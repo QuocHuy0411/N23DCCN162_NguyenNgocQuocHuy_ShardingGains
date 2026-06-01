@@ -22,7 +22,7 @@ from coordinator.router import active_shards, validate_nodes
 class ShardQueryResult:
     shard_id: int
     source: str
-    rows: list[dict]
+    rows: list[tuple]
     counted: int
     error: str | None = None
 
@@ -84,7 +84,7 @@ def query_logical_shard(
             shard_id=logical_shard.shard_id,
             source="P",
             rows=rows,
-            counted=sum(int(row["log_count"]) for row in rows),
+            counted=sum(int(row[1]) for row in rows),
         )
     except Exception as primary_error:
         try:
@@ -93,7 +93,7 @@ def query_logical_shard(
                 shard_id=logical_shard.shard_id,
                 source="R",
                 rows=rows,
-                counted=sum(int(row["log_count"]) for row in rows),
+                counted=sum(int(row[1]) for row in rows),
                 error=f"primary failed: {primary_error}",
             )
         except Exception as replica_error:

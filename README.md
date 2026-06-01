@@ -7,8 +7,13 @@ Sharding Gains is a distributed database benchmark project that demonstrates how
 The system benchmarks this query over a synthetic `User_Logs` dataset:
 
 ```sql
-SELECT user_id, COUNT(*)
-FROM user_logs
+WITH per_user_action AS (
+    SELECT user_id, action, COUNT(*) AS action_count
+    FROM user_logs
+    GROUP BY user_id, action
+)
+SELECT user_id, SUM(action_count) AS log_count
+FROM per_user_action
 GROUP BY user_id;
 ```
 
@@ -281,7 +286,7 @@ Example:
 ```text
 ================ SHARDING BENCHMARK ================
 
-Query: SELECT user_id, COUNT(*) FROM user_logs GROUP BY user_id
+Query: WITH per_user_action AS (...) SELECT user_id, SUM(action_count) FROM per_user_action GROUP BY user_id
 Dataset: 1,000,000 User_Logs
 Runs per scenario: 3
 Representative time: Median
@@ -559,6 +564,8 @@ Each shard returns:
 ```text
 user_id, log_count
 ```
+
+The query performs a two-stage aggregation: first it counts logs per `(user_id, action)`, then it sums those counts back to `user_id`. The final output still satisfies the benchmark requirement: `COUNT` grouped by `user_id`.
 
 The coordinator merges all available shard results with a dictionary:
 

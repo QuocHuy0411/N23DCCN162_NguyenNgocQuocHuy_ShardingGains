@@ -6,7 +6,6 @@ from typing import Iterable
 import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2 import sql
-from psycopg2.extras import RealDictCursor
 
 from coordinator.config import (
     CONNECT_TIMEOUT_SECONDS,
@@ -107,29 +106,39 @@ def copy_csv_to_table(endpoint: DbEndpoint, table_name: str, csv_file: Path) -> 
                 cursor.copy_expert(copy_statement, handle)
 
 
-def query_grouped_counts(endpoint: DbEndpoint, table_name: str) -> list[dict]:
+def query_grouped_counts(endpoint: DbEndpoint, table_name: str) -> list[tuple]:
     statement = sql.SQL(
         """
-        SELECT user_id, COUNT(*) AS log_count
-        FROM {}
+        WITH per_user_action AS (
+            SELECT user_id, action, COUNT(*) AS action_count
+            FROM {}
+            GROUP BY user_id, action
+        )
+        SELECT user_id, SUM(action_count) AS log_count
+        FROM per_user_action
         GROUP BY user_id
         """
     ).format(sql.Identifier(table_name))
 
     with connect(endpoint) as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with conn.cursor() as cursor:
             cursor.execute(statement)
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.fetchall()
 
 
 def query_grouped_counts_with_pool(
     endpoint_pool: EndpointConnectionPool,
     table_name: str,
-) -> list[dict]:
+) -> list[tuple]:
     statement = sql.SQL(
         """
-        SELECT user_id, COUNT(*) AS log_count
-        FROM {}
+        WITH per_user_action AS (
+            SELECT user_id, action, COUNT(*) AS action_count
+            FROM {}
+            GROUP BY user_id, action
+        )
+        SELECT user_id, SUM(action_count) AS log_count
+        FROM per_user_action
         GROUP BY user_id
         """
     ).format(sql.Identifier(table_name))
@@ -138,9 +147,9 @@ def query_grouped_counts_with_pool(
     close_connection = False
     try:
         conn = endpoint_pool.getconn()
-        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+        with conn.cursor() as cursor:
             cursor.execute(statement)
-            rows = [dict(row) for row in cursor.fetchall()]
+            rows = cursor.fetchall()
         conn.commit()
         return rows
     except Exception:

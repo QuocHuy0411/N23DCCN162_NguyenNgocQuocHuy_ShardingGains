@@ -41,7 +41,7 @@ def print_benchmark_table(results: list[ScenarioResult], runs: int) -> None:
     print()
     print("================ SHARDING BENCHMARK ================")
     print()
-    print("Query: SELECT user_id, COUNT(*) FROM user_logs GROUP BY user_id")
+    print("Query: WITH per_user_action AS (...) SELECT user_id, SUM(action_count) FROM per_user_action GROUP BY user_id")
     print(f"Dataset: {DEFAULT_ROWS:,} User_Logs")
     print(f"Runs per scenario: {runs}")
     print("Representative time: Median")
