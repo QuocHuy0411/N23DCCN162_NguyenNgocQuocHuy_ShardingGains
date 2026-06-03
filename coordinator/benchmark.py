@@ -131,7 +131,7 @@ def query_logical_shard(
             )
 
 
-def _estimate_comm_bytes(rows: list[tuple]) -> int:
+def _estimate_comm_bytes(rows: list[tuple]) -> int:#Ước tính số byte cần truyền để gửi kết quả từ logical shard về coordinator, bằng cách chuyển đổi kết quả thành JSON và đo kích thước của payload
     payload = json.dumps(rows, separators=(",", ":"), default=str)
     return len(payload.encode("utf-8"))
 

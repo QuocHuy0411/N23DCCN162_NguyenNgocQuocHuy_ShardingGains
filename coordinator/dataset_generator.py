@@ -15,7 +15,7 @@ from coordinator.config import (
 )
 
 
-def generate_dataset(
+def generate_dataset(#Sinh dataset giả lập user logs với các trường id, user_id, action, created_at
     rows: int = DEFAULT_ROWS,
     output_file: Path = DATA_FILE,
     force: bool = False,

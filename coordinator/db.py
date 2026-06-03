@@ -9,6 +9,7 @@ import psycopg2
 from psycopg2.pool import ThreadedConnectionPool
 from psycopg2 import sql
 
+# Các hàm và lớp để tương tác với cơ sở dữ liệu PostgreSQL
 from coordinator.config import (
     CONNECT_TIMEOUT_SECONDS,
     DbEndpoint,
@@ -18,9 +19,8 @@ from coordinator.config import (
     STATEMENT_TIMEOUT_MS,
 )
 
-
 @dataclass
-class QueryCostMetrics:
+class QueryCostMetrics:#Lớp để lưu trữ các chỉ số chi phí của truy vấn, bao gồm số block được hit, đọc, ghi tạm thời và thời gian thực tế
     shared_hit_blocks: int
     shared_read_blocks: int
     temp_read_blocks: int
@@ -38,7 +38,7 @@ class QueryCostMetrics:
         )
 
 
-def _grouped_counts_statement(table_name: str) -> sql.Composed:
+def _grouped_counts_statement(table_name: str) -> sql.Composed:#Truy vấn SQL để tính tổng số log cho mỗi user_id, nhóm theo action
     return sql.SQL(
         """
         WITH per_user_action AS (
@@ -53,7 +53,7 @@ def _grouped_counts_statement(table_name: str) -> sql.Composed:
     ).format(sql.Identifier(table_name))
 
 
-def connect(endpoint: DbEndpoint):
+def connect(endpoint: DbEndpoint):#Tạo kết nối đến cơ sở dữ liệu PostgreSQL dựa trên thông tin trong DbEndpoint
     return psycopg2.connect(
         host=endpoint.host,
         port=endpoint.port,
@@ -65,7 +65,7 @@ def connect(endpoint: DbEndpoint):
     )
 
 
-class EndpointConnectionPool:
+class EndpointConnectionPool:#Lớp quản lý pool kết nối đến một endpoint cơ sở dữ liệu, sử dụng ThreadedConnectionPool của psycopg2 để tạo và quản lý các kết nối
     def __init__(
         self,
         endpoint: DbEndpoint,
@@ -92,19 +92,19 @@ class EndpointConnectionPool:
             self.error = exc
 
     @property
-    def available(self) -> bool:
+    def available(self) -> bool:#Kiểm tra xem pool kết nối có sẵn hay không, dựa trên việc pool đã được khởi tạo thành công hay chưa
         return self._pool is not None
 
-    def getconn(self):
+    def getconn(self):#Lấy một kết nối từ pool. Nếu pool không khả dụng, sẽ ném ra lỗi với thông tin lỗi đã lưu
         if self._pool is None:
             raise RuntimeError(f"Pool không khả dụng cho {self.endpoint.name}: {self.error}")
         return self._pool.getconn()
 
-    def putconn(self, conn, close: bool = False) -> None:
+    def putconn(self, conn, close: bool = False) -> None:#Trả lại một kết nối vào pool. Nếu close là True, kết nối sẽ bị đóng thay vì được trả lại vào pool
         if self._pool is not None and conn is not None:
             self._pool.putconn(conn, close=close)
 
-    def closeall(self) -> None:
+    def closeall(self) -> None:#Đóng tất cả các kết nối trong pool. Nếu pool không tồn tại, sẽ không làm gì
         if self._pool is not None:
             self._pool.closeall()
 

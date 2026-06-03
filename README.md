@@ -1,8 +1,117 @@
 # Sharding Gains
 
-Sharding Gains là dự án mô phỏng và benchmark cơ sở dữ liệu phân tán dùng PostgreSQL, Docker Compose và Python. Mục tiêu chính là cho thấy phân mảnh ngang giúp cải thiện thời gian truy vấn tổng hợp như thế nào, đồng thời minh họa cơ chế fallback từ primary sang replica khi một shard bị dừng thủ công.
+Sharding Gains là dự án mô phỏng và benchmark cơ sở dữ liệu phân tán sử dụng PostgreSQL, Docker Compose và Python.
 
-Dữ liệu benchmark là bảng log người dùng `User_Logs` được sinh tự động. Truy vấn chính đếm số log theo từng `user_id`:
+Mục tiêu chính của dự án:
+
+- Mô phỏng phân mảnh ngang dữ liệu `User_Logs`.
+- So sánh thời gian truy vấn khi chạy với 1, 2 và 4 logical shard.
+- Minh họa cơ chế fallback từ primary sang replica khi một shard primary bị dừng.
+- Lưu kết quả benchmark ra CSV/JSON và hiển thị bằng dashboard Streamlit.
+
+## HUONG DAN CHAY DU AN
+
+Chạy các lệnh sau trong thư mục gốc của dự án:
+
+### Chạy nhanh
+
+```bash
+pip install -r requirements.txt
+docker compose up -d --build
+python -m coordinator.main generate --rows 1000000
+python -m coordinator.main init-db
+python -m coordinator.main load
+python -m coordinator.main benchmark
+streamlit run dashboard.py
+```
+
+Sau khi chạy lệnh cuối, mở dashboard tại địa chỉ Streamlit in ra trên terminal, thường là:
+
+```text
+http://localhost:8501
+```
+
+Kết quả benchmark được lưu tại:
+
+```text
+results/benchmark_results.csv
+results/benchmark_results.json
+```
+
+### Chạy từng bước
+
+1. Cài thư viện Python:
+
+```bash
+pip install -r requirements.txt
+```
+
+2. Khởi động 8 container PostgreSQL:
+
+```bash
+docker compose up -d --build
+docker ps
+```
+
+3. Sinh dữ liệu benchmark:
+
+```bash
+python -m coordinator.main generate --rows 1000000
+```
+
+Muốn sinh lại dữ liệu từ đầu:
+
+```bash
+python -m coordinator.main generate --rows 1000000 --force
+```
+
+4. Khởi tạo schema:
+
+```bash
+python -m coordinator.main init-db
+```
+
+5. Nạp dữ liệu vào các shard:
+
+```bash
+python -m coordinator.main load
+```
+
+6. Chạy benchmark:
+
+```bash
+python -m coordinator.main benchmark
+```
+
+Chỉ chạy một kịch bản cụ thể:
+
+```bash
+python -m coordinator.main benchmark --nodes 4
+```
+
+Đổi số lần chạy mỗi kịch bản:
+
+```bash
+python -m coordinator.main benchmark --runs 5
+```
+
+7. Mở dashboard:
+
+```bash
+streamlit run dashboard.py
+```
+
+### Chạy thử nhanh với dữ liệu ít hơn
+
+```bash
+python -m coordinator.main generate --rows 100000 --force
+python -m coordinator.main init-db
+python -m coordinator.main load
+python -m coordinator.main benchmark --runs 5
+streamlit run dashboard.py
+```
+
+Truy vấn benchmark chính đếm số log theo từng `user_id`:
 
 ```sql
 WITH per_user_action AS (
@@ -15,15 +124,7 @@ FROM per_user_action
 GROUP BY user_id;
 ```
 
-Dự án so sánh 3 kịch bản:
-
-| Kịch bản | Bảng dữ liệu | Số logical shard | Ý nghĩa |
-|---:|---|---:|---|
-| 1 shard | `user_logs_n1` | 1 | Baseline |
-| 2 shard | `user_logs_n2` | 2 | Phân mảnh trung bình |
-| 4 shard | `user_logs_n4` | 4 | Phân mảnh lớn nhất trong dự án |
-
-## 1. Kiến trúc
+## Kiến trúc hệ thống
 
 Hệ thống gồm một coordinator viết bằng Python và 8 container PostgreSQL:
 
@@ -64,14 +165,15 @@ Password: benchmark
 Host:     localhost
 ```
 
-Replica trong dự án không phải PostgreSQL streaming replication. Khi load dữ liệu, coordinator ghi cùng một partition vào primary và replica tương ứng. Cách này phù hợp với benchmark vì dữ liệu tĩnh và workload chỉ đọc.
+Lưu ý: replica trong dự án này không phải PostgreSQL streaming replication. Khi load dữ liệu, coordinator ghi cùng một partition vào primary và replica tương ứng. Cách này phù hợp với benchmark vì dữ liệu tĩnh và workload chỉ đọc.
 
-## 2. Cấu trúc thư mục
+## Cấu trúc thư mục
 
 ```text
 .
 |-- README.md
 |-- AI-AGENT.md
+|-- TAI_LIEU_THIET_KE.md
 |-- docker-compose.yml
 |-- dashboard.py
 |-- requirements.txt
@@ -98,7 +200,7 @@ Replica trong dự án không phải PostgreSQL streaming replication. Khi load 
     `-- benchmark_results.json
 ```
 
-## 3. Yêu cầu môi trường
+## Yêu cầu môi trường
 
 Cần cài trước:
 
@@ -116,188 +218,22 @@ python --version
 pip --version
 ```
 
-Cài thư viện Python:
-
-```bash
-pip install -r requirements.txt
-```
-
-Các thư viện chính:
+Các thư viện Python chính:
 
 - `psycopg2-binary`: kết nối PostgreSQL
 - `tabulate`: in bảng kết quả trên terminal
 - `streamlit`, `pandas`, `plotly`: dashboard
 
-## 4. Chạy nhanh từ đầu
+## Kết quả benchmark
 
-Từ thư mục gốc dự án:
-
-```bash
-docker compose up -d --build
-python -m coordinator.main generate --rows 1000000
-python -m coordinator.main init-db
-python -m coordinator.main load
-python -m coordinator.main benchmark
-streamlit run dashboard.py
-```
-
-Sau khi chạy xong, kết quả được lưu tại:
-
-```text
-results/benchmark_results.csv
-results/benchmark_results.json
-```
-
-Nếu dữ liệu và database đã được chuẩn bị từ trước, chạy lại benchmark chỉ cần:
-
-```bash
-python -m coordinator.main benchmark
-```
-
-## 5. Các lệnh chính
-
-### Khởi động PostgreSQL
-
-```bash
-docker compose up -d --build
-```
-
-Nếu container đã tồn tại và không đổi cấu hình Docker:
-
-```bash
-docker compose up -d
-```
-
-### Sinh dữ liệu
-
-```bash
-python -m coordinator.main generate --rows 1000000
-```
-
-Lệnh này tạo `data/user_logs.csv`. Mặc định dữ liệu gồm:
-
-- 1.000.000 dòng
-- 100.000 user có thể xuất hiện
-- các action: `login`, `logout`, `view_product`, `search`, `add_to_cart`, `checkout`
-- thời gian log nằm trong năm bắt đầu từ `2025-01-01`
-- seed cố định để có thể tái lập dữ liệu
-
-Nếu file đã tồn tại, chương trình sẽ dùng lại. Muốn sinh lại:
-
-```bash
-python -m coordinator.main generate --rows 1000000 --force
-```
-
-### Khởi tạo schema
-
-```bash
-python -m coordinator.main init-db
-```
-
-Lệnh này tạo 3 bảng trên toàn bộ primary và replica:
-
-```text
-user_logs_n1
-user_logs_n2
-user_logs_n4
-```
-
-Mỗi bảng có các cột:
-
-```text
-id, user_id, action, created_at
-```
-
-và index theo `user_id`.
-
-### Nạp dữ liệu vào shard
-
-```bash
-python -m coordinator.main load
-```
-
-Luồng nạp dữ liệu:
-
-1. Đọc `data/user_logs.csv`.
-2. Chia dữ liệu thành các chunk theo số shard của từng kịch bản.
-3. Truncate bảng tương ứng trên các node đang dùng.
-4. Copy dữ liệu vào primary.
-5. Copy cùng dữ liệu vào replica.
-
-Giữ lại chunk tạm để kiểm tra:
-
-```bash
-python -m coordinator.main load --keep-chunks
-```
-
-### Chạy benchmark
-
-Chạy toàn bộ 3 kịch bản 1, 2 và 4 shard:
-
-```bash
-python -m coordinator.main benchmark
-```
-
-Chỉ chạy một kịch bản:
-
-```bash
-python -m coordinator.main benchmark --nodes 4
-```
-
-Đổi số lần chạy mỗi kịch bản:
-
-```bash
-python -m coordinator.main benchmark --runs 5
-```
-
-Mặc định:
-
-```text
-runs = 20
-```
-
-## 6. Dashboard
-
-Sau khi có kết quả benchmark, mở dashboard:
-
-```bash
-streamlit run dashboard.py
-```
-
-Dashboard đọc file:
-
-```text
-results/benchmark_results.json
-```
-
-Nếu chưa có file kết quả, dashboard sẽ nhắc chạy:
-
-```bash
-python -m coordinator.main benchmark
-```
-
-Dashboard hiển thị:
-
-- tổng số log và số user
-- số lần benchmark
-- bảng thời gian từng lần chạy
-- bảng tóm tắt benchmark
-- biểu đồ thời gian trung vị
-- biểu đồ speedup thực tế so với lý tưởng
-- biểu đồ efficiency
-- heatmap thời gian từng lần chạy
-- bảng và biểu đồ mô hình chi phí Özsu
-
-## 7. Kết quả benchmark
-
-CLI in bảng gồm các thông tin chính:
+CLI in bảng kết quả gồm các thông tin chính:
 
 | Cột | Ý nghĩa |
 |---|---|
 | Số shard | Số logical shard của kịch bản |
 | Thời gian chạy | Danh sách thời gian từng lần chạy, đơn vị giây |
 | Trung bình | Thời gian trung bình |
-| Trung vị | Thời gian đại diện dùng để tính speedup |
+| Trung vị | Thời gian dùng để tính speedup |
 | P99 | Tail latency theo nearest-rank percentile |
 | Mức tăng tốc | `T1 / Tn` |
 | Hiệu suất | `speedup / số shard` |
@@ -311,7 +247,7 @@ Ký hiệu nguồn shard:
 |---|---|
 | `P` | Đọc từ primary |
 | `R` | Primary lỗi, đọc từ replica |
-| `trống` hoặc ô trống | Cả primary và replica đều lỗi |
+| ô trống | Cả primary và replica đều lỗi |
 | `-` | Shard không dùng trong kịch bản |
 | `P/R` | Nguồn đọc thay đổi giữa các lần chạy |
 
@@ -322,11 +258,9 @@ Speedup(n) = median_time_1_shard / median_time_n_shards
 Efficiency(n) = Speedup(n) / n
 ```
 
-Nếu chạy riêng `--nodes 2` hoặc `--nodes 4`, chương trình sẽ cố đọc baseline 1 shard từ `results/benchmark_results.json`. Nếu chưa có baseline đầy đủ, speedup và efficiency sẽ là `N/A`.
+## Mô hình chi phí
 
-## 8. Mô hình chi phí Özsu
-
-Ngoài thời gian chạy, dự án còn lưu và hiển thị một mô hình chi phí thực nghiệm:
+Ngoài thời gian chạy, dự án còn lưu một mô hình chi phí thực nghiệm:
 
 ```text
 Cost = IO + CPU + Comm
@@ -343,7 +277,7 @@ Các thành phần:
 
 Đây là chi phí thực nghiệm để liên hệ với mô hình chi phí trong cơ sở dữ liệu phân tán, không phải cost nội bộ tuyệt đối của PostgreSQL optimizer.
 
-## 9. Cách phân mảnh dữ liệu
+## Cách phân mảnh dữ liệu
 
 Quy tắc router:
 
@@ -354,25 +288,13 @@ nodes = 2 hoặc 4: shard_id = (user_id % nodes) + 1
 
 Ý nghĩa:
 
-- kịch bản 1 shard dùng shard 1
-- kịch bản 2 shard dùng shard 1 và shard 2
-- kịch bản 4 shard dùng shard 1, 2, 3 và 4
+- Kịch bản 1 shard dùng shard 1.
+- Kịch bản 2 shard dùng shard 1 và shard 2.
+- Kịch bản 4 shard dùng shard 1, 2, 3 và 4.
 
-Coordinator query các shard song song bằng `ThreadPoolExecutor`. Kết quả từng shard có dạng:
+Coordinator query các shard song song bằng `ThreadPoolExecutor`, sau đó merge kết quả theo `user_id`.
 
-```text
-user_id, log_count
-```
-
-Sau đó coordinator merge bằng cộng dồn:
-
-```text
-global_counts[user_id] += log_count
-```
-
-## 10. Demo lỗi và fallback
-
-Dự án không tự động tắt container. Người dùng tự dừng node bằng Docker, sau đó chạy benchmark lại.
+## Demo fallback
 
 ### Trạng thái bình thường
 
@@ -405,8 +327,6 @@ S2 = R
 Độ đầy đủ = 100%
 ```
 
-Coordinator thử primary trước. Nếu primary lỗi hoặc timeout, coordinator thử replica.
-
 ### Dừng cả primary và replica của một shard
 
 ```bash
@@ -437,53 +357,7 @@ S2 = P
 Độ đầy đủ = 100%
 ```
 
-## 11. File kết quả
-
-CSV và JSON lưu các trường chính:
-
-```text
-nodes
-run_times_seconds
-mean_time_seconds
-median_time_seconds
-p99_time_seconds
-speedup
-efficiency
-counted_logs
-expected_logs
-completeness_percent
-io_blocks_formula_hit_plus_read_plus_temp_read_plus_temp_written
-cpu_ms_formula_shard_actual_time_plus_coordinator_merge_time
-comm_rows_formula_rows_returned_to_coordinator
-comm_kb_formula_comm_bytes_div_1024
-total_cost_formula_io_plus_cpu_plus_comm_kb
-s1_source
-s2_source
-s3_source
-s4_source
-notes
-```
-
-JSON còn có:
-
-```json
-{
-  "dataset_rows": 1000000,
-  "baseline_median_time_seconds": 0.0,
-  "dataset": {
-    "expected_logs": 1000000,
-    "distinct_users": 100000
-  },
-  "benchmark_config": {
-    "runs": 20,
-    "scenarios": [1, 2, 4],
-    "time_unit": "seconds"
-  },
-  "benchmark_results": []
-}
-```
-
-## 12. Xử lý lỗi thường gặp
+## Xử lý lỗi thường gặp
 
 ### Docker chưa chạy
 
@@ -549,7 +423,7 @@ Rồi chạy lại benchmark:
 python -m coordinator.main benchmark --nodes 4
 ```
 
-## 13. Reset sạch
+## Reset sạch
 
 Dừng container:
 
@@ -567,50 +441,8 @@ Sau khi xóa volume, chạy lại từ đầu:
 
 ```bash
 docker compose up -d --build
-python -m coordinator.main init-db
-python -m coordinator.main load
-python -m coordinator.main benchmark
-```
-
-Nếu `data/user_logs.csv` vẫn còn, không cần sinh lại dataset. Nếu muốn sinh lại:
-
-```bash
-python -m coordinator.main generate --rows 1000000 --force
-```
-
-## 14. Kịch bản demo đề xuất
-
-Chạy benchmark đầy đủ:
-
-```bash
-docker compose up -d --build
 python -m coordinator.main generate --rows 1000000
 python -m coordinator.main init-db
 python -m coordinator.main load
 python -m coordinator.main benchmark
-streamlit run dashboard.py
-```
-
-Demo fallback sang replica:
-
-```bash
-docker stop shard2_primary
-python -m coordinator.main benchmark --nodes 4
-streamlit run dashboard.py
-```
-
-Demo kết quả một phần:
-
-```bash
-docker stop shard2_replica
-python -m coordinator.main benchmark --nodes 4
-streamlit run dashboard.py
-```
-
-Khôi phục:
-
-```bash
-docker start shard2_primary
-docker start shard2_replica
-python -m coordinator.main benchmark --nodes 4
 ```

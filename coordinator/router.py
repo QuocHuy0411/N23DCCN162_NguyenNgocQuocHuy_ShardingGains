@@ -8,7 +8,7 @@ def validate_nodes(nodes: int) -> None:
         allowed = ", ".join(str(item) for item in SCENARIOS)
         raise ValueError(f"nodes phải là một trong các giá trị: {allowed}")
 
-
+#Xác định shard_id dựa trên user_id và số lượng nodes
 def shard_id_for_user(user_id: int, nodes: int) -> int:
     validate_nodes(nodes)
     if nodes == 1:
