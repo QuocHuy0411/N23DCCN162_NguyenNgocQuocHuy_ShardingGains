@@ -13,18 +13,21 @@ import streamlit as st
 RESULTS_JSON = Path("results/benchmark_results.json")
 
 def _format_seconds(value: Any) -> str:
+    """Định dạng giá trị thời gian theo giây để hiển thị trên dashboard."""
     if value is None:
         return "N/A"
     return f"{float(value):.4f}"
 
 
 def _format_ratio(value: Any) -> str:
+    """Định dạng các tỷ lệ như speedup hoặc efficiency với 2 chữ số thập phân."""
     if value is None:
         return "N/A"
     return f"{float(value):.2f}"
 
 
 def _format_percent(value: Any) -> str:
+    """Định dạng phần trăm độ đầy đủ dữ liệu, tự làm tròn khi gần số nguyên."""
     if value is None:
         return "N/A"
     value = float(value)
@@ -34,6 +37,7 @@ def _format_percent(value: Any) -> str:
 
 
 def _load_payload() -> dict[str, Any] | None:
+    """Đọc file kết quả benchmark JSON để dashboard có dữ liệu hiển thị."""
     if not RESULTS_JSON.exists():
         return None
     try:
@@ -43,6 +47,7 @@ def _load_payload() -> dict[str, Any] | None:
 
 
 def _normalize_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Chuẩn hóa dữ liệu kết quả cũ và mới về cùng một cấu trúc cho dashboard."""
     if "benchmark_results" in payload:
         return payload["benchmark_results"]
 
@@ -93,6 +98,7 @@ def _normalize_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _run_times_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Tạo bảng thời gian chạy của từng lần benchmark cho mỗi kịch bản shard."""
     max_runs = max((len(row.get("run_times_seconds", [])) for row in results), default=0)
     rows = []
     for result in results:
@@ -107,6 +113,7 @@ def _run_times_table(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _summary_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Tạo bảng tóm tắt các chỉ số chính của benchmark."""
     rows = []
     for result in results:
         shards = result.get("shards", {})
@@ -130,10 +137,12 @@ def _summary_table(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cost_model(result: dict[str, Any]) -> dict[str, Any]:
+    """Lấy phần mô hình chi phí Özsu từ một kết quả benchmark."""
     return result.get("cost_model_ozsu") or {}
 
 
 def _cost_table(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Tạo bảng chi tiết các thành phần chi phí IO, CPU và Comm."""
     rows = []
     for result in results:
         cost = _cost_model(result)
@@ -151,6 +160,7 @@ def _cost_table(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _chart_df(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Chuyển kết quả benchmark thành DataFrame dùng cho biểu đồ hiệu năng."""
     return pd.DataFrame(
         [
             {
@@ -167,6 +177,7 @@ def _chart_df(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _cost_chart_df(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Chuyển dữ liệu chi phí thành DataFrame dùng cho các biểu đồ cost."""
     return pd.DataFrame(
         [
             {
@@ -198,6 +209,7 @@ def _cost_chart_df(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _heatmap_df(results: list[dict[str, Any]]) -> pd.DataFrame:
+    """Trải phẳng thời gian từng lần chạy để vẽ heatmap theo số shard."""
     rows = []
     for result in results:
         for index, value in enumerate(result.get("run_times_seconds", []), start=1):
@@ -213,6 +225,7 @@ def _heatmap_df(results: list[dict[str, Any]]) -> pd.DataFrame:
 
 
 def _summary_cards(payload: dict[str, Any], results: list[dict[str, Any]]) -> None:
+    """Hiển thị các metric tổng quan ở đầu dashboard Streamlit."""
     dataset = payload.get("dataset", {})
     config = payload.get("benchmark_config", {})
     complete_values = [float(result.get("completeness_percent") or 0) for result in results]
@@ -230,6 +243,7 @@ def _summary_cards(payload: dict[str, Any], results: list[dict[str, Any]]) -> No
 
 
 def main() -> None:
+    """Khởi tạo giao diện Streamlit và render toàn bộ dashboard benchmark."""
     st.set_page_config(page_title="Bảng điều khiển Sharding Gains", layout="wide")
     st.title("Bảng điều khiển Sharding Gains")
     st.caption("Benchmark phân mảnh ngang trên các shard PostgreSQL, có fallback từ primary sang replica.")

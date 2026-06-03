@@ -39,6 +39,8 @@ TABLE_BY_NODES = {
 
 @dataclass(frozen=True)
 class DbEndpoint:
+    """Mô tả thông tin kết nối tới một container PostgreSQL cụ thể."""
+
     name: str
     host: str
     port: int
@@ -49,6 +51,8 @@ class DbEndpoint:
 
 @dataclass(frozen=True)
 class LogicalShard:
+    """Mô tả một logical shard gồm một primary và một replica."""
+
     shard_id: int
     primary: DbEndpoint
     replica: DbEndpoint

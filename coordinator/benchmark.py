@@ -25,7 +25,10 @@ from coordinator.router import active_shards, validate_nodes
 
 
 @dataclass
+#Lớp ShardQueryResult lưu kết quả truy vấn của một logical shard trong một lần benchmark, bao gồm thông tin về shard_id, nguồn dữ liệu (primary hoặc replica), các hàng kết quả, số lượng log đã đếm được, lỗi nếu có, và các chỉ số chi phí như IO blocks, CPU ms, số hàng truyền về và số byte truyền về.
 class ShardQueryResult:
+    """Lưu kết quả truy vấn của một logical shard trong một lần benchmark."""
+
     shard_id: int
     source: str
     rows: list[tuple]
@@ -39,7 +42,10 @@ class ShardQueryResult:
 
 
 @dataclass
+#Lớp RunResult lưu toàn bộ chỉ số của một lần chạy benchmark cho một kịch bản, bao gồm thời gian chạy, kết quả truy vấn của từng shard, số lượng log đã đếm được, độ đầy đủ dữ liệu, thời gian merge kết quả, và các chỉ số chi phí tổng hợp như IO blocks, CPU ms, số hàng truyền về và số byte truyền về.
 class RunResult:
+    """Lưu toàn bộ chỉ số của một lần chạy benchmark cho một kịch bản."""
+
     elapsed_seconds: float
     shard_results: list[ShardQueryResult]
     counted_logs: int
@@ -53,7 +59,10 @@ class RunResult:
 
 
 @dataclass
+#Lớp ScenarioResult lưu kết quả tổng hợp sau nhiều lần chạy của một kịch bản shard, bao gồm số lượng nodes, thời gian chạy của từng lần, các chỉ số thống kê như mean, median và p99 time, tốc độ tăng tốc và hiệu suất so với baseline, số lượng log đã đếm được, độ đầy đủ dữ liệu, nguồn đọc của từng shard, các chỉ số chi phí trung bình và các ghi chú liên quan đến kết quả benchmark.
 class ScenarioResult:
+    """Lưu kết quả tổng hợp sau nhiều lần chạy của một kịch bản shard."""
+
     nodes: int
     run_times: list[float]
     mean_time: float
@@ -75,13 +84,18 @@ class ScenarioResult:
 
 
 @dataclass
+#Lớp LogicalShardPools giữ connection pool primary và replica cho một logical shard, bao gồm shard_id, connection pool cho primary endpoint và connection pool cho replica endpoint. Lớp này được sử dụng để quản lý kết nối đến các shard trong quá trình chạy benchmark.
 class LogicalShardPools:
+    """Giữ connection pool primary và replica cho một logical shard."""
+
     shard_id: int
     primary: EndpointConnectionPool
     replica: EndpointConnectionPool
 
 
 def build_pools_for_scenario(nodes: int) -> dict[int, LogicalShardPools]:
+    #Hàm build_pools_for_scenario để tạo connection pool cho toàn bộ shard đang dùng trong kịch bản.
+    """Tạo connection pool cho toàn bộ shard đang dùng trong kịch bản."""
     pools: dict[int, LogicalShardPools] = {}
     for shard in active_shards(nodes):
         pools[shard.shard_id] = LogicalShardPools(
@@ -93,28 +107,40 @@ def build_pools_for_scenario(nodes: int) -> dict[int, LogicalShardPools]:
 
 
 def close_scenario_pools(pools: dict[int, LogicalShardPools]) -> None:
+#Khóa tất cả connection pool sau khi chạy xong một kịch bản để giải phóng tài nguyên và đảm bảo rằng các kết nối đến các shard được đóng lại một cách an toàn sau khi hoàn thành công việc.
+    """Đóng tất cả connection pool sau khi chạy xong một kịch bản."""
     for shard_pools in pools.values():
         shard_pools.primary.closeall()
         shard_pools.replica.closeall()
 
 
 def query_logical_shard(
+    #Hàm query_logical_shard để truy vấn một logical shard cụ thể, ưu tiên truy vấn từ primary và nếu có lỗi thì sẽ fallback sang replica của cùng shard. 
+    #Kết quả trả về sẽ bao gồm thông tin về shard_id, nguồn dữ liệu đã truy vấn (primary hoặc replica), các hàng kết quả, số lượng log đã đếm được, và lỗi nếu có.
     logical_shard: LogicalShard,
     table_name: str,
     shard_pools: LogicalShardPools,
 ) -> ShardQueryResult:
+    """Truy vấn primary trước, nếu lỗi thì fallback sang replica của cùng shard."""
     try:
         rows = query_grouped_counts_with_pool(shard_pools.primary, table_name)
+        #Truy vấn dữ liệu từ primary endpoint của shard bằng cách sử dụng connection pool đã tạo. 
+        #Kết quả sẽ là một danh sách các tuple, trong đó mỗi tuple chứa user_id và số lượng log tương ứng từ primary endpoint.
         return ShardQueryResult(
+        #Trả về kết quả truy vấn dưới dạng một đối tượng ShardQueryResult, bao gồm shard_id, nguồn dữ liệu (P cho primary), các hàng kết quả, số lượng log đã đếm được, và lỗi nếu có.
             shard_id=logical_shard.shard_id,
             source="P",
             rows=rows,
             counted=sum(int(row[1]) for row in rows),
         )
     except Exception as primary_error:
+        #Nếu có lỗi xảy ra khi truy vấn từ primary endpoint, sẽ bắt lỗi và lưu thông tin lỗi vào biến primary_error. 
+        #Sau đó, sẽ cố gắng truy vấn từ replica endpoint của cùng shard để đảm bảo rằng dữ liệu vẫn có thể được truy cập ngay cả khi primary gặp sự cố.
         try:
             rows = query_grouped_counts_with_pool(shard_pools.replica, table_name)
+            #Truy vấn dữ liệu từ replica endpoint của shard bằng cách sử dụng connection pool đã tạo.
             return ShardQueryResult(
+            #Trả về kết quả truy vấn từ replica dưới dạng một đối tượng ShardQueryResult, bao gồm shard_id, nguồn dữ liệu (R cho replica), các hàng kết quả, số lượng log đã đếm được, và lỗi nếu có.
                 shard_id=logical_shard.shard_id,
                 source="R",
                 rows=rows,
@@ -122,6 +148,7 @@ def query_logical_shard(
                 error=f"primary lỗi: {primary_error}",
             )
         except Exception as replica_error:
+        #Nếu có lỗi xảy ra khi truy vấn từ replica endpoint, sẽ bắt lỗi và lưu thông tin lỗi vào biến replica_error.
             return ShardQueryResult(
                 shard_id=logical_shard.shard_id,
                 source="",
@@ -131,35 +158,48 @@ def query_logical_shard(
             )
 
 
-def _estimate_comm_bytes(rows: list[tuple]) -> int:#Ước tính số byte cần truyền để gửi kết quả từ logical shard về coordinator, bằng cách chuyển đổi kết quả thành JSON và đo kích thước của payload
+def _estimate_comm_bytes(rows: list[tuple]) -> int:
+    """Ước tính số byte truyền từ shard về coordinator bằng kích thước JSON."""
     payload = json.dumps(rows, separators=(",", ":"), default=str)
     return len(payload.encode("utf-8"))
 
 
 def collect_logical_shard_cost(
+    #Hàm collect_logical_shard_cost để đo lường chi phí IO, CPU và truyền dữ liệu cho một shard đã truy vấn thành công trong lần chạy benchmark.
     shard_result: ShardQueryResult,
     table_name: str,
     shard_pools: LogicalShardPools,
 ) -> ShardQueryResult:
+    """Đo IO, CPU và Comm cho shard đã truy vấn thành công trong lần chạy."""
     shard_result.comm_rows = len(shard_result.rows)
+    #Đếm số lượng hàng kết quả trả về từ shard, đây là một phần của chi phí truyền dữ liệu giữa shard và coordinator.
     shard_result.comm_bytes = _estimate_comm_bytes(shard_result.rows)
+    #Ước tính số byte truyền từ shard về coordinator bằng cách tính kích thước của dữ liệu trả về khi được chuyển đổi thành JSON. 
+    #Đây là một cách để đánh giá chi phí truyền dữ liệu giữa shard và coordinator.
 
-    if shard_result.source == "":
+    if shard_result.source == "":#Kiểm tra lỗi truy vấn trước khi đo chi phí
         return shard_result
 
     pool = shard_pools.primary if shard_result.source == "P" else shard_pools.replica
+    #Chọn connection pool tương ứng với nguồn dữ liệu đã truy vấn thành công (primary hoặc replica) để đo chi phí.
     try:
         metrics = explain_grouped_counts_cost_with_pool(pool, table_name)
-        shard_result.io_blocks = metrics.io_blocks
-        shard_result.cpu_ms = metrics.actual_total_time_ms
+        #Thực thi câu lệnh EXPLAIN để đo chi phí IO và CPU của truy vấn trên shard, sử dụng connection pool đã chọn. 
+        #Kết quả sẽ bao gồm các chỉ số chi phí như số block IO và thời gian CPU thực tế.
+        shard_result.io_blocks = metrics.io_blocks 
+        #Lưu số block IO vào kết quả shard.
+        shard_result.cpu_ms = metrics.actual_total_time_ms 
+        #Lưu thời gian CPU thực tế vào kết quả shard.
     except Exception as exc:
         shard_result.cost_error = str(exc)
     return shard_result
 
 
 def _nearest_rank_p99(values: list[float]) -> float:
+    """Tính p99 bằng phương pháp nearest-rank từ danh sách thời gian chạy."""
     sorted_values = sorted(values)
-    index = math.ceil(0.99 * len(sorted_values)) - 1
+    index = math.ceil(0.99 * len(sorted_values)) - 1 
+    #Tính chỉ số của phần tử p99 trong danh sách đã sắp xếp bằng cách sử dụng phương pháp nearest-rank, trong đó index được tính bằng cách lấy phần trăm (0.99) nhân với độ dài của danh sách và sau đó làm tròn lên để lấy phần nguyên lớn nhất.
     return sorted_values[max(0, min(index, len(sorted_values) - 1))]
 
 
@@ -167,6 +207,7 @@ def run_single_benchmark(
     nodes: int,
     pools: dict[int, LogicalShardPools],
 ) -> RunResult:
+    """Chạy một lần benchmark: query song song, merge kết quả và tính cost."""
     validate_nodes(nodes)
     table_name = TABLE_BY_NODES[nodes]
     shards = active_shards(nodes)
@@ -209,10 +250,15 @@ def run_single_benchmark(
             future.result()
 
     io_blocks = sum(result.io_blocks for result in shard_results)
+    #Tổng hợp số block IO từ tất cả các shard bằng cách cộng dồn số block IO của từng shard.
     shard_cpu_ms = sum(result.cpu_ms for result in shard_results)
+    #Tổng hợp thời gian CPU từ tất cả các shard bằng cách cộng dồn thời gian CPU của từng shard.
     cpu_ms = shard_cpu_ms + merge_time_ms
+    #Tổng hợp thời gian CPU từ tất cả các shard và thời gian merge.
     comm_rows = sum(result.comm_rows for result in shard_results)
+    #Tổng hợp số hàng truyền về từ tất cả các shard bằng cách cộng dồn số hàng của từng shard.
     comm_bytes = sum(result.comm_bytes for result in shard_results)
+    #Tổng hợp số byte truyền về từ tất cả các shard bằng cách cộng dồn số byte của từng shard.
     cost_units = io_blocks + cpu_ms + (comm_bytes / 1024)
 
     return RunResult(
@@ -234,6 +280,7 @@ def _notes_for_sources(
     completeness_percent: float,
     source_changed: bool,
 ) -> list[str]:
+    """Tạo các ghi chú/cảnh báo dựa trên nguồn đọc P/R và độ đầy đủ dữ liệu."""
     notes: list[str] = []
     if any("R" in source for source in shard_sources.values()):
         notes.append("Một số primary shard không khả dụng nên hệ thống đã dùng replica.")
@@ -251,6 +298,7 @@ def _notes_for_sources(
 
 
 def _format_source_history(sources: list[str]) -> str:
+    """Tóm tắt lịch sử nguồn đọc của shard thành P, R, trống hoặc P/R."""
     ordered = [source for source in ("P", "R", "") if source in sources]
     if not ordered:
         return "-"
@@ -260,6 +308,7 @@ def _format_source_history(sources: list[str]) -> str:
 
 
 def _source_summary(nodes: int, run_results: list[RunResult]) -> tuple[dict[int, str], bool]:
+    """Tổng hợp nguồn đọc của từng shard qua nhiều lần chạy benchmark."""
     shard_sources = {index: "-" for index in range(1, 5)}
     source_changed = False
     for shard_id in range(1, nodes + 1):
@@ -276,6 +325,7 @@ def _source_summary(nodes: int, run_results: list[RunResult]) -> tuple[dict[int,
 
 
 def run_scenario(nodes: int, runs: int, baseline_time: float | None) -> ScenarioResult:
+    """Chạy một kịch bản shard nhiều lần và tính các chỉ số thống kê tổng hợp."""
     run_results = []
     print(f"Đang chuẩn bị connection pool cho nodes={nodes}...")
     pools = build_pools_for_scenario(nodes)
@@ -333,6 +383,7 @@ def run_scenario(nodes: int, runs: int, baseline_time: float | None) -> Scenario
 
 
 def run_benchmark(nodes: int | None = None, runs: int = DEFAULT_RUNS) -> list[ScenarioResult]:
+    """Chạy benchmark cho một kịch bản cụ thể hoặc toàn bộ kịch bản đã cấu hình."""
     scenarios = [nodes] if nodes is not None else list(SCENARIOS)
     for scenario in scenarios:
         validate_nodes(scenario)
@@ -358,6 +409,7 @@ def run_benchmark(nodes: int | None = None, runs: int = DEFAULT_RUNS) -> list[Sc
 
 
 def load_saved_baseline_time() -> float | None:
+    """Đọc median time của kịch bản 1 shard đã lưu để tính speedup khi cần."""
     if not RESULTS_JSON.exists():
         return None
 

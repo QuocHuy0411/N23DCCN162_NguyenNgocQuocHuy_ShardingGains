@@ -10,17 +10,15 @@ from coordinator.loader import init_database, load_all_scenarios
 from coordinator.reporter import print_benchmark_table, save_results
 
 
-#Điểm này là điểm khởi đầu của chương trình. 
-# Nó sử dụng argparse để phân tích các đối số dòng lệnh và gọi các hàm tương ứng dựa trên lệnh được cung cấp. 
-# Các lệnh bao gồm "generate" để tạo dữ liệu, "init-db" để khởi tạo cơ sở dữ liệu, "load" để tải dữ liệu vào các kịch bản khác nhau, và "benchmark" để chạy các bài kiểm tra hiệu suất. 
-# Kết quả của bài kiểm tra sẽ được in ra bảng và lưu lại.
 def configure_console_encoding() -> None:
+    """Ép stdout/stderr dùng UTF-8 để terminal in tiếng Việt ổn định hơn."""
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Tạo bộ phân tích lệnh CLI cho generate, init-db, load và benchmark."""
     parser = argparse.ArgumentParser(
         prog="python -m coordinator.main",
         description="Horizontal Scaling Efficiency: Sharding Gains",
@@ -48,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Điểm vào CLI, gọi đúng workflow theo lệnh người dùng truyền vào."""
     configure_console_encoding()
     parser = build_parser()
     args = parser.parse_args()

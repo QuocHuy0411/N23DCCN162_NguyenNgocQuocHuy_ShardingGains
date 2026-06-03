@@ -15,11 +15,12 @@ from coordinator.config import (
 )
 
 
-def generate_dataset(#Sinh dataset giả lập user logs với các trường id, user_id, action, created_at
+def generate_dataset(
     rows: int = DEFAULT_ROWS,
     output_file: Path = DATA_FILE,
     force: bool = False,
 ) -> Path:
+    """Sinh dataset giả lập user logs với các trường id, user_id, action, created_at."""
     if output_file.exists() and not force:
         print(f"Dataset đã tồn tại: {output_file}")
         print("Dùng --force để sinh lại.")

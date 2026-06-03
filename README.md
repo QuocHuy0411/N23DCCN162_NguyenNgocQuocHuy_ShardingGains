@@ -170,34 +170,33 @@ Lưu ý: replica trong dự án này không phải PostgreSQL streaming replicat
 ## Cấu trúc thư mục
 
 ```text
-.
-|-- README.md
-|-- AI-AGENT.md
-|-- TAI_LIEU_THIET_KE.md
-|-- docker-compose.yml
-|-- dashboard.py
-|-- requirements.txt
+.                                      # Thư mục gốc của dự án Sharding Gains
+|-- README.md                          # Tài liệu hướng dẫn chạy, kiến trúc, benchmark và xử lý lỗi
+|-- docker-compose.yml                 # Khai báo 8 container PostgreSQL cho 4 primary và 4 replica
+|-- dashboard.py                       # Dashboard Streamlit đọc JSON kết quả và vẽ bảng/biểu đồ
+|-- requirements.txt                   # Danh sách thư viện Python cần cài bằng pip
 |
-|-- coordinator/
-|   |-- main.py
-|   |-- config.py
-|   |-- dataset_generator.py
-|   |-- loader.py
-|   |-- router.py
-|   |-- benchmark.py
-|   |-- db.py
-|   |-- merger.py
-|   `-- reporter.py
+|-- coordinator/                       # Mã Python đóng vai trò coordinator của hệ phân tán
+|   |-- __init__.py                    # Đánh dấu coordinator là một Python package
+|   |-- main.py                        # Điểm vào CLI: generate, init-db, load, benchmark
+|   |-- config.py                      # Cấu hình dataset, port, endpoint và danh sách shard
+|   |-- dataset_generator.py           # Sinh dữ liệu giả lập user_logs.csv
+|   |-- loader.py                      # Chia dữ liệu theo shard và nạp vào primary/replica
+|   |-- router.py                      # Tính shard_id từ user_id và chọn shard đang hoạt động
+|   |-- benchmark.py                   # Chạy truy vấn song song, fallback P/R và tính metric
+|   |-- db.py                          # Kết nối PostgreSQL, COPY dữ liệu, query và EXPLAIN cost
+|   |-- merger.py                      # Gộp kết quả đếm log từ nhiều shard theo user_id
+|   `-- reporter.py                    # In bảng CLI và lưu kết quả CSV/JSON
 |
-|-- db/
-|   `-- init.sql
+|-- db/                                # Script SQL dùng để khởi tạo schema trong PostgreSQL
+|   `-- init.sql                       # Tạo bảng user_logs_n1/n2/n4 và index theo user_id
 |
-|-- data/
-|   `-- user_logs.csv
+|-- data/                              # Dữ liệu đầu vào được sinh ra khi chạy lệnh generate
+|   `-- user_logs.csv                  # Dataset user logs giả lập, có thể sinh lại bằng --force
 |
-`-- results/
-    |-- benchmark_results.csv
-    `-- benchmark_results.json
+`-- results/                           # Kết quả đầu ra sau khi chạy benchmark
+    |-- benchmark_results.csv          # Kết quả dạng bảng để mở bằng Excel hoặc đọc nhanh
+    `-- benchmark_results.json         # Kết quả dạng JSON cho dashboard Streamlit
 ```
 
 ## Yêu cầu môi trường

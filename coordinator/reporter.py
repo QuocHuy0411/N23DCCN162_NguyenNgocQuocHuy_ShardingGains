@@ -20,30 +20,36 @@ from coordinator.config import (
 
 
 def _format_seconds(value: float) -> str:
+    """Định dạng thời gian giây cho bảng kết quả trên terminal."""
     return f"{value:.2f}"
 
 
 def _format_ratio(value: float | None) -> str:
+    """Định dạng tỷ lệ speedup/efficiency hoặc trả N/A khi chưa có baseline."""
     if value is None:
         return "N/A"
     return f"{value:.2f}"
 
 
 def _format_completeness(value: float) -> str:
+    """Định dạng phần trăm độ đầy đủ dữ liệu của kết quả benchmark."""
     if abs(value - round(value)) < 0.005:
         return f"{round(value):.0f}%"
     return f"{value:.2f}%"
 
 
 def _format_run_times(values: list[float]) -> str:
+    """Định dạng danh sách thời gian từng lần chạy thành chuỗi ngắn."""
     return "[" + ", ".join(_format_seconds(value) for value in values) + "]"
 
 
 def _format_cost(value: float) -> str:
+    """Định dạng giá trị cost model với 2 chữ số thập phân."""
     return f"{value:.2f}"
 
 
 def print_benchmark_table(results: list[ScenarioResult], runs: int) -> None:
+    """In bảng benchmark và bảng cost model ra terminal."""
     print()
     print("================ BENCHMARK SHARDING ================")
     print()
@@ -155,6 +161,7 @@ def print_benchmark_table(results: list[ScenarioResult], runs: int) -> None:
 
 
 def _row_for_result(result: ScenarioResult) -> dict[str, Any]:
+    """Chuyển ScenarioResult thành một dòng phẳng để ghi CSV."""
     return {
         "nodes": result.nodes,
         "run_times_seconds": [round(value, 6) for value in result.run_times],
@@ -180,6 +187,7 @@ def _row_for_result(result: ScenarioResult) -> dict[str, Any]:
 
 
 def _json_result_for_result(result: ScenarioResult) -> dict[str, Any]:
+    """Chuyển ScenarioResult thành cấu trúc JSON giàu ngữ nghĩa cho dashboard."""
     row = _row_for_result(result)
     return {
         "nodes": result.nodes,
@@ -221,6 +229,7 @@ def _json_result_for_result(result: ScenarioResult) -> dict[str, Any]:
 
 
 def save_results(results: list[ScenarioResult]) -> None:
+    """Lưu kết quả benchmark ra CSV và JSON trong thư mục results."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     rows = [_row_for_result(result) for result in results]
